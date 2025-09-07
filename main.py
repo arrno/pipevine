@@ -24,12 +24,13 @@ def make_gen() -> Callable[[], Tuple[bool, Result]]:
         return True, i
     return run
 
-async def pipe():
-    await Pipeline().\
+
+if __name__ == "__main__":
+    
+    job = Pipeline().\
         gen(make_gen()).\
         stage(double).\
         stage(square).\
         run()
-
-if __name__ == "__main__":
-    asyncio.run(pipe())
+    
+    asyncio.run(job)
