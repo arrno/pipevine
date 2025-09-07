@@ -11,21 +11,10 @@ def double(val: int) -> Result[int]:
 def square(val: int) -> Result[int]:
     return val * val
 
-def make_gen() -> Callable[[], Tuple[bool, Result]]:
-    i = -1
-    def run() -> Tuple[bool, Result]:
-        nonlocal i
-        if i >= 9:
-            return False, 0
-        i += 1
-        return True, i
-    return run
-
-
 if __name__ == "__main__":
 
     job = Pipeline().\
-        gen(make_gen()).\
+        gen(i for i in range(10)).\
         stage(double).\
         stage(square).\
         run()

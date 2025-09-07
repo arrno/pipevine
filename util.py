@@ -12,6 +12,11 @@ type Result[T] = T | Err
 def is_err(res: Result[T]) -> bool:
     return isinstance(res, Err)
 
+def get_err(res: Result[T]) -> str:
+    if isinstance(res, Err):
+        return res.message
+    return ""
+
 def is_ok(res: Result[T]) -> bool:
     return not is_err(res)
 

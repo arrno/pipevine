@@ -1,8 +1,8 @@
 from stage import Stage
 from util import Result, is_err, unwrap, Err
-from typing import Callable, Any, Tuple
+from typing import Any, Iterator
 import asyncio
-from asyncio import Queue
+from asyncio import Queue, shield
 from worker import worker, SENTINEL
 
 class Pipeline:
@@ -13,12 +13,12 @@ class Pipeline:
 
     def __init__(self) -> None:
         self.log: bool = True
-        self.gen_func: Callable[[], Tuple[bool, Result]] | None = None
+        self.generator: Iterator[Result] | None = None
         self.stages: list[Stage] = []
         self.result: Result = "ok"
 
-    def gen(self, gen: Callable[[], Tuple[bool, Result]]) -> "Pipeline":
-        self.gen_func = gen
+    def gen(self, gen: Iterator[Result]) -> "Pipeline":
+        self.generator = gen
         return self
     
     def stage(self, st: Stage) -> "Pipeline":
@@ -26,31 +26,30 @@ class Pipeline:
             self.stages.append(st)
         return self
     
-    def __generate(self, gen: Callable[[], Tuple[bool, Result]]) -> Queue[Any]:
-        outbound: Queue = Queue(1)
-    
-        async def run():
+    def __generate(self, gen: Iterator[Any]) -> asyncio.Queue[Any]:
+        outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
 
-            con = True
-            while con:
+        async def run() -> None:
+            try:
+                for result in gen:
+                    if is_err(result):
+                        self.__handle_err(str(result))
+                        self.__handle_log(result)
+                        return                        # sentinel sent in finally
+                    await outbound.put(unwrap(result))
+            except asyncio.CancelledError:
+                # allow task cancellation to propagate; finally still runs
+                raise
+            except Exception as e:
+                # real error from iterator or unwrap()
+                self.__handle_err(str(e))
+                self.__handle_log(e)
+            finally:
+                # guarantee exactly-once termination signal
                 try:
-                    con, result = gen()
-                except Exception as e:
-                    self.__handle_err(str(e))
-                    self.__handle_log(e)
-                    await outbound.put(SENTINEL)
-                    return    
-                
-                if not con:
-                    await outbound.put(SENTINEL)
-                
-                if is_err(result):
-                    self.__handle_err(str(result))
-                    self.__handle_log(result)
-                    await outbound.put(SENTINEL)
-                    con = False      
-                
-                await outbound.put(unwrap(result))
+                    await shield(outbound.put(SENTINEL))
+                except Exception:
+                    pass
 
         asyncio.create_task(run())
         return outbound
@@ -71,13 +70,13 @@ class Pipeline:
             
     async def run(self) -> Result:
 
-        if not self.gen_func:
+        if not self.generator:
             Err("no generator")
             self.__handle_err(Err.message)
             self.__handle_log(Err.message)
             return Err
         
-        stream = self.__generate(self.gen_func)
+        stream = self.__generate(self.generator)
         for stage in self.stages:
             stream = worker(stage.functions[0], stream) # TODO handle types of stages
         await self.__drain(stream)
