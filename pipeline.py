@@ -27,6 +27,10 @@ class Pipeline:
             self.stages.append(st)
         return self
     
+    def __rshift__(self, other: Stage) -> "Pipeline":
+        self.stage(other)
+        return self
+
     def __generate(self, gen: Iterator[Any]) -> asyncio.Queue[Any]:
         outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
 
@@ -79,6 +83,11 @@ class Pipeline:
         
         stream = self.__generate(self.generator)
         for stage in self.stages:
-            stream = worker(stage.functions[0], stream) # TODO handle types of stages
+            stream = worker(
+                stage.functions[0], 
+                stage.buffer, 
+                stage.retries,
+                stream,
+            ) # TODO handle types of stages
         await self.__drain(stream)
         return self.result

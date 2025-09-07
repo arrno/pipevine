@@ -1,7 +1,10 @@
 from enum import Enum, auto
-from typing import Callable, Any
+from typing import Callable, Any, TypeVar, TypeAlias
 from dataclasses import dataclass
-from util import Result
+from util import Err
+
+T = TypeVar("T")
+Result: TypeAlias = T | Err
 
 class StageType(Enum):
     Simple = auto()

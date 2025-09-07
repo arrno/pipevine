@@ -20,3 +20,10 @@ if __name__ == "__main__":
 
     asyncio.run(job)
 ```
+
+or
+
+```python
+p = Pipeline(i for i in range(10)) >> double >> square
+asyncio.run(p.run())
+```
