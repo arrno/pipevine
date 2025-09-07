@@ -1,29 +1,66 @@
 import asyncio
 from asyncio import Queue, shield
 from typing import Callable, Any, TypeVar, Tuple
-from util import Result, is_err, get_err, unwrap, with_retry
+from util import Result, unwrap, with_retry
 from multiprocessing import get_context, Queue as MPQueue
 from multiprocessing.process import BaseProcess
+from collections import deque
 
 SENTINEL = None
 T = TypeVar("T")
 
+def worker_no_buf(
+    f: Callable[[Any], Result[T]], 
+    retries: int,
+    inbound: Queue[Any],
+) -> Queue[Any]: 
+    
+    outbound: Queue = Queue(1)
+    handler = with_retry(retries)(f)
+
+    async def run():
+        try:
+            while True:
+                val = await inbound.get()
+                if val is SENTINEL:
+                    break
+                await outbound.put(handler(val))
+        finally:
+            await shield(outbound.put(SENTINEL))
+
+    asyncio.create_task(run())
+    return outbound
+
 # async wrapper
 def worker(
     f: Callable[[Any], Result[T]], 
-    buffer: int, 
+    buf_size: int, 
     retries: int,
     inbound: Queue[Any],
 ) -> Queue[Any]:
     
-    outbound: Queue = Queue(buffer)
-    handler = with_retry(retries)(f)
+    if buf_size <= 0:
+        return worker_no_buf(f, retries, inbound)
     
+    outbound: Queue = Queue(1)
+    handler = with_retry(retries)(f)
+    buff_in: Queue[Any] = Queue(max(1, buf_size))
+
+    async def buff():
+        try:
+            while True:
+                val = await inbound.get()
+                if val is SENTINEL:
+                    return
+                await buff_in.put(val)
+        finally: 
+            await shield(buff_in.put(SENTINEL))
+
     async def run():
         try:
             while True:
                 # pull
-                val = await inbound.get()
+                val = await buff_in.get()
                 
                 # normal close
                 if val is SENTINEL:
@@ -37,30 +74,53 @@ def worker(
         finally: 
             await shield(outbound.put(SENTINEL))
 
+    asyncio.create_task(buff())
     asyncio.create_task(run())
     return outbound
 
 def mp_worker(
     f: Callable[[Any], Result[T]], 
-    buffer: int, 
+    buf_size: int, 
     retries: int,
     inbound: MPQueue,
 ) -> Tuple[MPQueue, BaseProcess]:
     
     ctx = get_context("spawn")
-    outbound: MPQueue = ctx.Queue(buffer)
-    handler = with_retry(retries)(f)
+    outbound: MPQueue = ctx.Queue(1)
+    buf_size = max(0, buf_size)
 
     def run(inbound: MPQueue, outbound: MPQueue):
+        from queue import Empty
+        handler = with_retry(retries)(f)
+
+        ring: deque[T] = deque()
+        sentinel_seen = False
+
         try:
             while True:
-                # pull
-                val = inbound.get()
+                if buf_size > 0 and not sentinel_seen:
+                    try:
+                        while len(ring) < buf_size and not sentinel_seen:
+                            item = inbound.get_nowait()
+                            if item is SENTINEL:
+                                sentinel_seen = True
+                                break
+                            ring.append(item)
+                    except Empty:
+                        pass
                 
-                # normal close
-                if val is SENTINEL:
+                if not ring and sentinel_seen:
                     break
-                
+
+                # If nothing buffered, block for the next item
+                if not ring:
+                    val = inbound.get()
+                    if val is SENTINEL:
+                        break  # no buffered work; terminate
+                    ring.append(val)
+
+                # Process one item
+                val = ring.popleft()
                 result = handler(val)
                 outbound.put(unwrap(result))
 
@@ -69,6 +129,10 @@ def mp_worker(
         finally: 
             outbound.put(SENTINEL)
 
-    proc = ctx.Process(target=run, args=(inbound, outbound), daemon=True)
+    proc = ctx.Process(
+        target=run, 
+        args=(inbound, outbound), 
+        daemon=True,
+    )
     proc.start()
     return outbound, proc
