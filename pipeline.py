@@ -13,11 +13,11 @@ class Pipeline:
 
     def __init__(self) -> None:
         self.log: bool = True
-        self.generator: Iterator[Result] | None = None
+        self.generator: Iterator[Any] | None = None
         self.stages: list[Stage] = []
         self.result: Result = "ok"
 
-    def gen(self, gen: Iterator[Result]) -> "Pipeline":
+    def gen(self, gen: Iterator[Any]) -> "Pipeline":
         self.generator = gen
         return self
     

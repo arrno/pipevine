@@ -1,8 +1,5 @@
 import asyncio
-from asyncio import Queue
-from typing import Any, Callable, Tuple, Iterator
 from util import Result
-from worker import worker, SENTINEL
 from pipeline import Pipeline
 from stage import as_stage
 
