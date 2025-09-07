@@ -11,17 +11,6 @@ def double(val: int) -> Result[int]:
 def square(val: int) -> Result[int]:
     return val * val
 
-def generator() -> Queue[Any]:
-    q: Queue = Queue(1)
-
-    async def run():
-        for i in range(10):
-            await q.put(i)
-        await q.put(SENTINEL)
-
-    asyncio.create_task(run())
-    return q
-
 def make_gen() -> Callable[[], Tuple[bool, Result]]:
     i = -1
     def run() -> Tuple[bool, Result]:
