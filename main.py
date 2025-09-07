@@ -1,48 +1,18 @@
 import asyncio
 from asyncio import Queue
-from typing import Callable, Any, TypeVar
-from util import Result, is_err, unwrap
+from typing import Any, Callable, Tuple
+from util import Result
+from worker import worker, SENTINEL
+from pipeline import Pipeline
+from stage import as_stage
 
-# handlers
+@as_stage
 def double(val: int) -> Result[int]:
     return val + val
 
+@as_stage
 def square(val: int) -> Result[int]:
     return val * val
-
-SENTINEL = None
-T = TypeVar("T")
-
-# async wrapper
-def worker(f: Callable[[Any], Result[T]], inbound: Queue[Any]) -> Queue[Any]:
-    outbound: Queue = Queue(1)
-
-    async def run():
-        while True:
-            # pull
-            val = await inbound.get()
-            
-            # normal close
-            if val is SENTINEL:
-                await outbound.put(SENTINEL)
-                return
-            
-            try:
-                result = f(val)
-            except Exception as e:
-                print(e)
-                await outbound.put(SENTINEL)
-                return    
-            
-            if is_err(result):
-                print(result)
-                await outbound.put(SENTINEL)
-                return           
-            
-            await outbound.put(unwrap(result))
-
-    asyncio.create_task(run())
-    return outbound
 
 def generator() -> Queue[Any]:
     q: Queue = Queue(1)
@@ -55,19 +25,22 @@ def generator() -> Queue[Any]:
     asyncio.create_task(run())
     return q
 
-async def drain(q: Queue[Any]) -> None:
-    while True:
-        val = await q.get()
-        if val is SENTINEL:
-            break
-        print(val)
+def make_gen() -> Callable[[], Tuple[bool, Result]]:
+    i = -1
+    def run() -> Tuple[bool, Result]:
+        nonlocal i
+        if i >= 9:
+            return False, 0
+        i += 1
+        return True, i
+    return run
 
-# boot
-async def boot():
-    inbound = generator()
-    queue_one = worker(double, inbound)
-    queue_two = worker(square, queue_one)
-    await drain(queue_two)
+async def pipe():
+    await Pipeline().\
+        gen(make_gen()).\
+        stage(double).\
+        stage(square).\
+        run()
 
 if __name__ == "__main__":
-    asyncio.run(boot())
+    asyncio.run(pipe())
