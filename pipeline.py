@@ -11,11 +11,12 @@ class Pipeline:
     async pipeline
     '''
 
-    def __init__(self) -> None:
+    def __init__(self, gen: Iterator[Any]) -> None:
         self.log: bool = True
         self.generator: Iterator[Any] | None = None
         self.stages: list[Stage] = []
         self.result: Result = "ok"
+        self.gen(gen)
 
     def gen(self, gen: Iterator[Any]) -> "Pipeline":
         self.generator = gen

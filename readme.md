@@ -13,8 +13,7 @@ def square(val: int) -> Result[int]:
 
 if __name__ == "__main__":
 
-    job = Pipeline().\
-        gen(i for i in range(10)).\
+    job = Pipeline(i for i in range(10)).\
         stage(double).\
         stage(square).\
         run()
