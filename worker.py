@@ -24,7 +24,10 @@ def worker_no_buf(
                 val = await inbound.get()
                 if val is SENTINEL:
                     break
-                await outbound.put(handler(val))
+                result = handler(val)
+                if asyncio.iscoroutine(result):
+                    result = await result
+                await outbound.put(result)
         finally:
             await shield(outbound.put(SENTINEL))
 
@@ -67,6 +70,8 @@ def worker(
                     break
                 
                 result = handler(val)
+                if asyncio.iscoroutine(result):
+                    result = await result
                 await outbound.put(unwrap(result))
 
         except Exception as e:
@@ -122,6 +127,8 @@ def mp_worker(
                 # Process one item
                 val = ring.popleft()
                 result = handler(val)
+                # Note: mp_worker runs in separate process, can't await async functions
+                # async functions should be wrapped or converted to sync before mp_worker
                 outbound.put(unwrap(result))
 
         except Exception as e:

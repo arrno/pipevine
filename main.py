@@ -4,11 +4,11 @@ from pipeline import Pipeline
 from stage import as_stage
 
 @as_stage
-def double(val: int) -> Result[int]:
+async def double(val: int) -> Result[int]:
     return val + val
 
 @as_stage
-def square(val: int) -> Result[int]:
+async def square(val: int) -> Result[int]:
     return val * val
 
 @err_as_value

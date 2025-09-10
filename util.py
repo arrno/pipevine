@@ -44,7 +44,8 @@ def unwrap_or(res: Result[T], default: T) -> T:
     return res
 
 def err_as_value(func: Callable[P, T]) -> Callable[P, Result[T]]:
-    def wrap(*args: P.args, **kwargs: P.kwargs) -> Result:
+    @wraps(func)
+    def wrap(*args: P.args, **kwargs: P.kwargs) -> Result[T]:
         try:
             res = func(*args, **kwargs)
             return res
