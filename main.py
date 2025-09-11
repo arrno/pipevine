@@ -1,13 +1,13 @@
 import asyncio
 from util import Result, err_as_value, Err
 from pipeline import Pipeline
-from stage import as_stage
+from stage import as_stage, stage, StageType
 
-@as_stage
+@stage(buffer=1, retries=1, stage_type=StageType.Pool)
 async def double(val: int) -> Result[int]:
     return val + val
 
-@as_stage
+@stage(buffer=1, retries=1, stage_type=StageType.Pool)
 async def square(val: int) -> Result[int]:
     return val * val
 

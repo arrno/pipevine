@@ -83,12 +83,6 @@ class Pipeline:
         
         stream = self.__generate(self.generator)
         for stage in self.stages:
-            # TODO call stage.run instead
-            stream = worker(
-                stage.functions[0], 
-                stage.buffer, 
-                stage.retries,
-                stream,
-            )
+            stream = stage.run(stream)
         await self.__drain(stream)
         return self.result
