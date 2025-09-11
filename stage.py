@@ -55,12 +55,13 @@ class Stage:
             
         # TODO handle merger
 
-def stage(
+def worker_pool(
     *,
     buffer: int = 1,
     retries: int = 1,
-    stage_type: StageType = StageType.Pool,
-    merger: Callable[[Any], Any] | None = None
+    num_workers: int = 1,
+    multi_thread: bool = False,
+    # merger: Callable[[Any], Any] | None = None
 ) -> Callable[[Callable[[Any], Any]], Stage]:
     """
     Decorator to create stages with configurable options.
@@ -71,7 +72,13 @@ def stage(
     @stage(stage_type=StageType.Fork, merger=lambda results: sum(results))
     """
     def decorator(f: Callable[[Any], Any]) -> Stage:
-        return Stage(buffer, retries, stage_type, [f], merger)
+        return Stage(
+            buffer, 
+            retries, 
+            StageType.Fork if multi_thread else StageType.Pool, 
+            [f for _ in range(num_workers)], 
+            None,
+        )
     
     return decorator
 
