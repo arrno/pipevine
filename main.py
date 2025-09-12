@@ -1,14 +1,14 @@
 import asyncio
 from util import Result, err_as_value
 from pipeline import Pipeline
-from stage import worker_pool, mix_pool
+from stage import work_pool, mix_pool
 from typing import Callable
 
-@worker_pool(buffer=1, retries=1, num_workers=1)
+@work_pool(buffer=1, retries=1, num_workers=1)
 async def double(val: int) -> Result[int]:
     return val + val
 
-@worker_pool(buffer=1, retries=1, num_workers=1)
+@work_pool(buffer=1, retries=1, num_workers=1)
 async def square(val: int) -> Result[int]:
     return val * val
 

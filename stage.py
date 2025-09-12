@@ -55,7 +55,7 @@ class Stage:
             
         # TODO handle merger
 
-def worker_pool(
+def work_pool(
     *,
     buffer: int = 1,
     retries: int = 1,
@@ -66,9 +66,9 @@ def worker_pool(
     Decorator to create stages with configurable options.
     
     Usage:
-    @worker_pool()  # defaults
-    @worker_pool(buffer=10, retries=3)  # with options
-    @worker_pool(stage_type=StageType.Fork, merger=lambda results: sum(results))
+    @work_pool()  # defaults
+    @work_pool(buffer=10, retries=3)  # with options
+    @work_pool(stage_type=StageType.Fork, merger=lambda results: sum(results))
     """
     def decorator(f: StageFunc) -> Stage:
         return Stage(
