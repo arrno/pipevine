@@ -4,8 +4,6 @@ from typing import (
     Any,
     TypeVar,
     TypeAlias,
-    Iterator,
-    overload,
 )
 from dataclasses import dataclass
 from util import Err
@@ -14,6 +12,8 @@ from asyncio import Queue
 
 T = TypeVar("T")
 Result: TypeAlias = T | Err
+
+type StageFunc = Callable[[Any], Any]
 
 class StageType(Enum):
     Fork = auto()
@@ -25,7 +25,7 @@ class Stage:
     retries: int
     stage_type: StageType
     functions: list[Callable[[Any], Any]]
-    merger: Callable[[Any], Any] | None
+    merger: Callable[[list[Any]], Any] | None
 
     def run(self, inbound: Queue[Any]) -> Queue[Any]:
         """Run the stage with the appropriate worker pattern."""
@@ -61,23 +61,40 @@ def worker_pool(
     retries: int = 1,
     num_workers: int = 1,
     multi_thread: bool = False,
-    # merger: Callable[[Any], Any] | None = None
-) -> Callable[[Callable[[Any], Any]], Stage]:
+) -> Callable[[StageFunc], Stage]:
     """
     Decorator to create stages with configurable options.
     
     Usage:
-    @stage()  # defaults
-    @stage(buffer=10, retries=3)  # with options
-    @stage(stage_type=StageType.Fork, merger=lambda results: sum(results))
+    @worker_pool()  # defaults
+    @worker_pool(buffer=10, retries=3)  # with options
+    @worker_pool(stage_type=StageType.Fork, merger=lambda results: sum(results))
     """
-    def decorator(f: Callable[[Any], Any]) -> Stage:
+    def decorator(f: StageFunc) -> Stage:
         return Stage(
             buffer, 
             retries, 
             StageType.Fork if multi_thread else StageType.Pool, 
             [f for _ in range(num_workers)], 
             None,
+        )
+    
+    return decorator
+
+def mix_pool(
+    *,
+    buffer: int = 1,
+    retries: int = 1,
+    multi_thread: bool = False,
+    merger: Callable[[list[Any]], Any] | None = None
+) -> Callable[[Callable[[], list[StageFunc]]], Stage]:
+    def decorator(fs: Callable[[], list[Callable]]) -> Stage:
+        return Stage(
+            buffer, 
+            retries, 
+            StageType.Fork if multi_thread else StageType.Pool, 
+            fs(), 
+            merger,
         )
     
     return decorator
