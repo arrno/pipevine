@@ -13,7 +13,7 @@ async def square(val: int) -> Result[int]:
     return val * val
 
 @mix_pool(buffer=2, retries=2, merger=lambda x: x)
-def fork_stage() -> list[Callable]:
+def dub_sqr() -> list[Callable]:
     return [
         lambda x : x + x,
         lambda x : x * x

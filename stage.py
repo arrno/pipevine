@@ -7,7 +7,6 @@ from typing import (
 )
 from dataclasses import dataclass
 from util import Err
-import asyncio
 from asyncio import Queue
 
 T = TypeVar("T")
@@ -23,7 +22,7 @@ class StageType(Enum):
 class Stage:
     buffer: int
     retries: int
-    stage_type: StageType
+    multi_thread: bool
     functions: list[Callable[[Any], Any]]
     merger: Callable[[list[Any]], Any] | None
 
@@ -31,29 +30,23 @@ class Stage:
         """Run the stage with the appropriate worker pattern."""
         from worker import worker, SENTINEL
         
-        # TODO handle buffer here
         # TODO spawn a worker per function
 
-        match self.stage_type:
-            case StageType.Pool:
-                # Single worker processes all tasks sequentially
-                return worker(
-                    self.functions[0], 
-                    self.buffer, 
-                    self.retries,
-                    inbound,
-                )
-            case StageType.Fork:
-                # For now, implement as single worker
-                # TODO: Implement true fork with multiple workers and merger
-                return worker(
-                    self.functions[0], 
-                    self.buffer, 
-                    self.retries,
-                    inbound,
-                )
-            
-        # TODO handle merger
+        if self.multi_thread:
+            return worker(
+                self.functions[0], 
+                self.buffer, 
+                self.retries,
+                inbound,
+            )
+        else:
+            return worker(
+                self.functions[0], 
+                self.buffer, 
+                self.retries,
+                inbound,
+            )
+            # TODO handle merger if not None
 
 def work_pool(
     *,
@@ -74,7 +67,7 @@ def work_pool(
         return Stage(
             buffer, 
             retries, 
-            StageType.Fork if multi_thread else StageType.Pool, 
+            multi_thread, 
             [f for _ in range(num_workers)], 
             None,
         )
@@ -92,7 +85,7 @@ def mix_pool(
         return Stage(
             buffer, 
             retries, 
-            StageType.Fork if multi_thread else StageType.Pool, 
+            multi_thread, 
             fs(), 
             merger,
         )
@@ -102,4 +95,4 @@ def mix_pool(
 # Keep as_stage for backwards compatibility, but always with defaults
 def as_stage(func: Callable[[Any], Any]) -> Stage:
     """Simple stage decorator with defaults."""
-    return Stage(1, 1, StageType.Pool, [func], None)
+    return Stage(1, 1, False, [func], None)

@@ -3,22 +3,27 @@
 Async iter tools for python
 
 ```python
-@as_stage
-def double(val: int) -> Result[int]:
+@work_pool(buffer=1, retries=1, num_workers=1)
+async def double(val: int) -> Result[int]:
     return val + val
 
-@as_stage
-def square(val: int) -> Result[int]:
+@work_pool(buffer=1, retries=1, num_workers=1)
+async def square(val: int) -> Result[int]:
     return val * val
 
-if __name__ == "__main__":
+@mix_pool(buffer=2, retries=2, merger=lambda x: x)
+def dub_sqr() -> list[Callable]:
+    return [
+        lambda x : x + x,
+        lambda x : x * x
+    ]
 
-    job = Pipeline(i for i in range(10)).\
-        stage(double).\
-        stage(square).\
-        run()
+job = Pipeline(i for i in range(10)).\
+    stage(double).\
+    stage(square).\
+    run()
 
-    asyncio.run(job)
+asyncio.run(job)
 ```
 
 or
