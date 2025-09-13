@@ -15,7 +15,7 @@ async def square(val: int) -> Result[int]:
 @mix_pool(
     buffer=20,
     multi_proc=True,
-    merger=lambda x: x,
+    merge=lambda x: x,
 )
 def dub_sqr() -> list[Callable]:
     return [

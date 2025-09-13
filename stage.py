@@ -25,7 +25,7 @@ Result: TypeAlias = T | Err
 
 type StageFunc = Callable[[Any], Any]
 
-class PathType(Enum):
+class PathChoice(Enum):
     One = auto() # item takes on func path in stage
     All = auto() # item is emitted on every func path in stage
 
@@ -36,15 +36,14 @@ def _split_buffer_across(n: int, total: int) -> list[int]:
     sizes = [base + (1 if i < rem else 0) for i in range(n)]
     return sizes
 
-
 @dataclass
 class Stage:
     buffer: int
     retries: int
     multi_proc: bool  # True => multiprocessing
     functions: list[Callable[[Any], Any]]
-    merger: Optional[Callable[[list[Any]], Any]] = None # TODO
-    path_type: PathType = PathType.One
+    merge: Optional[Callable[[list[Any]], Any]] = None # TODO
+    choose: PathChoice = PathChoice.One
 
     def _run(self, inbound: Queue) -> Queue:
         """
@@ -85,7 +84,7 @@ class Stage:
         async def _run_async():
             if not self.multi_proc:
                 # ---- ASYNC workers ----
-                if self.path_type is PathType.One:
+                if self.choose is PathChoice.One:
                     shared_in = await make_shared_inbound_for_pool(
                         inbound, n_workers=len(self.functions), maxsize=self.buffer
                     )
@@ -101,7 +100,7 @@ class Stage:
 
             else:
                 # ---- MP workers ----
-                if self.path_type is PathType.One:
+                if self.choose is PathChoice.One:
                     shared_in = await make_shared_inbound_for_pool(
                         inbound, n_workers=len(self.functions), maxsize=self.buffer
                     )
@@ -139,6 +138,8 @@ def work_pool(
     retries: int = 1,
     num_workers: int = 1,
     multi_proc: bool = False,
+    choose: PathChoice = PathChoice.One,
+    merge: Callable[[list[Any]], Any] | None = None
 ) -> Callable[[StageFunc], Stage]:
     """
     Decorator to create stages with configurable options.
@@ -146,7 +147,7 @@ def work_pool(
     Usage:
     @work_pool()  # defaults
     @work_pool(buffer=10, retries=3)  # with options
-    @work_pool(stage_type=StageType.Fork, merger=lambda results: sum(results))
+    @work_pool(stage_type=StageType.Fork, merge=lambda results: sum(results))
     """
     def decorator(f: StageFunc) -> Stage:
         return Stage(
@@ -154,7 +155,8 @@ def work_pool(
             retries, 
             multi_proc, 
             [f for _ in range(num_workers)], 
-            None,
+            merge,
+            choose,
         )
     
     return decorator
@@ -164,7 +166,8 @@ def mix_pool(
     buffer: int = 1,
     retries: int = 1,
     multi_proc: bool = False,
-    merger: Callable[[list[Any]], Any] | None = None
+    choose: PathChoice = PathChoice.One,
+    merge: Callable[[list[Any]], Any] | None = None
 ) -> Callable[[Callable[[], list[StageFunc]]], Stage]:
     def decorator(fs: Callable[[], list[Callable]]) -> Stage:
         return Stage(
@@ -172,7 +175,8 @@ def mix_pool(
             retries, 
             multi_proc, 
             fs(), 
-            merger,
+            merge,
+            choose,
         )
     
     return decorator
