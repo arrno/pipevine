@@ -5,8 +5,8 @@ from util import Result, unwrap, with_retry
 from multiprocessing import get_context, Queue as MPQueue
 from multiprocessing.process import BaseProcess
 from collections import deque
+from async_util import SENTINEL
 
-SENTINEL = None
 T = TypeVar("T")
 
 def worker_no_buf(

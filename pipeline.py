@@ -3,7 +3,7 @@ from util import Result, is_err, unwrap, Err
 from typing import Any, Iterator
 import asyncio
 from asyncio import Queue, shield
-from worker import worker, SENTINEL
+from async_util import SENTINEL
 
 class Pipeline:
     
