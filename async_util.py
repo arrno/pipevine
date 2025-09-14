@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from multiprocessing import get_context
-from typing import Any, Optional
+from typing import Any, Optional, Callable
 
 SENTINEL = object()
 
@@ -88,6 +88,68 @@ async def _multiplex_async_queues_task(queues: list[asyncio.Queue]) -> asyncio.Q
     asyncio.create_task(supervisor())
     return outbound
 
+async def _multiplex_and_merge_async_queues(
+    queues: list[asyncio.Queue],
+    merge: Callable[[list[Any]], Any],
+    *,
+    outbound_maxsize: int = 1,
+) -> asyncio.Queue:
+    """
+    Barrier-synchronize across all queues:
+      - In each round, await exactly one item from each queue.
+      - If ANY item is SENTINEL, stop (no merge emitted for that round),
+        then drain the remaining queues up to their SENTINEL to avoid
+        upstream backpressure / deadlocks.
+      - Otherwise, merge(items) and put to outbound.
+
+    Cohort integrity: items are taken in lockstep (one per queue per round),
+    so cohorts aren't mixed across rounds.
+    """
+    if not queues:
+        return asyncio.Queue(maxsize=1)
+
+    outbound: asyncio.Queue = asyncio.Queue(maxsize=outbound_maxsize)
+
+    async def drain_to_sentinel(q: asyncio.Queue) -> None:
+        while True:
+            x = await q.get()
+            if x is SENTINEL:
+                return
+
+    async def supervisor():
+        try:
+            while True:
+                # One "barrier" get per queue for this round
+                get_tasks = [asyncio.create_task(q.get()) for q in queues]
+                try:
+                    items = await asyncio.gather(*get_tasks)
+                except Exception:
+                    # If the supervisor is being cancelled/aborting, close downstream.
+                    for t in get_tasks:
+                        if not t.done():
+                            t.cancel()  # Safe: pending gets don't dequeue
+                    raise
+
+                # If any queue ended, we terminate the stream (no partial merge)
+                if any(item is SENTINEL for item in items):
+                    # Drain all *other* queues to their SENTINEL so producers can finish.
+                    drains = []
+                    for item, q in zip(items, queues):
+                        if item is SENTINEL:
+                            continue
+                        drains.append(asyncio.create_task(drain_to_sentinel(q)))
+                    if drains:
+                        await asyncio.gather(*drains)
+                    break
+
+                # Normal path: merge the cohort and emit
+                merged = merge(items)
+                await outbound.put(merged)
+        finally:
+            await outbound.put(SENTINEL)
+
+    asyncio.create_task(supervisor())
+    return outbound
 
 def multiplex_async_queues(queues: list[asyncio.Queue]) -> asyncio.Queue:
     """
