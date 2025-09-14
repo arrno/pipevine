@@ -11,7 +11,11 @@ async def double(val: int) -> Result[int]:
 async def square(val: int) -> Result[int]:
     return val * val
 
-@mix_pool(buffer=20, multi_proc=True, merge=lambda x: x)
+@mix_pool(
+    buffer=20,
+    multi_proc=True,
+    fork_merge=lambda x: x,
+)
 def dub_sqr() -> list[Callable]:
     return [
         lambda x : x + x,

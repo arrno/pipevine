@@ -43,36 +43,7 @@ class Stage:
     multi_proc: bool  # True => multiprocessing
     functions: list[Callable[[Any], Any]]
     merge: Optional[Callable[[list[Any]], Any]] = None # TODO
-    choose: PathChoice = PathChoice.One
-
-    def _run(self, inbound: Queue) -> Queue:
-        """
-        Public contract: accept and return Queue.
-        Internally, spin MP adapters if multi_proc=True.
-        """
-
-        if not self.multi_proc:
-            # Async path
-            outqs: list[Queue] = []
-            for func in self.functions:
-                out_q = worker(func, self.buffer, self.retries, inbound)  # returns Queue
-                outqs.append(out_q)
-            return multiplex_async_queues(outqs)
-
-        # Multiprocessing path
-        # 1) bridge inbound async -> mp
-        mp_inbound = async_to_mp_queue(inbound, ctx_method="spawn")
-
-        # 2) start mp workers, adapt each MPQueue -> Queue
-        outqs_async: list[Queue] = []
-        procs = []
-        for func in self.functions:
-            mp_out_q, proc = mp_worker(func, self.buffer, self.retries, mp_inbound)
-            outqs_async.append(mp_to_async_queue(mp_out_q))
-            procs.append(proc)
-
-        # 3) multiplex results as async
-        return multiplex_async_queues(outqs_async)
+    _choose: PathChoice = PathChoice.One
 
     def run(self, inbound: Queue) -> Queue:
         """
@@ -80,11 +51,12 @@ class Stage:
         """
         # return queue now; supervise in background
         outbound: Queue = Queue(maxsize=self.buffer)
+        self.inbound = inbound
 
         async def _run_async():
             if not self.multi_proc:
                 # ---- ASYNC workers ----
-                if self.choose is PathChoice.One:
+                if self._choose is PathChoice.One:
                     shared_in = await make_shared_inbound_for_pool(
                         inbound, n_workers=len(self.functions), maxsize=self.buffer
                     )
@@ -100,7 +72,7 @@ class Stage:
 
             else:
                 # ---- MP workers ----
-                if self.choose is PathChoice.One:
+                if self._choose is PathChoice.One:
                     shared_in = await make_shared_inbound_for_pool(
                         inbound, n_workers=len(self.functions), maxsize=self.buffer
                     )
@@ -132,14 +104,19 @@ class Stage:
         asyncio.create_task(_run_async())
         return outbound
     
+    async def close(self) -> bool:
+        if hasattr(self, "inbound"):
+            await self.inbound.put(SENTINEL)
+            return True
+        return False
+    
 def work_pool(
     *,
     buffer: int = 1,
     retries: int = 1,
     num_workers: int = 1,
     multi_proc: bool = False,
-    choose: PathChoice = PathChoice.One,
-    merge: Callable[[list[Any]], Any] | None = None
+    fork_merge: Callable[[list[Any]], Any] | None = None
 ) -> Callable[[StageFunc], Stage]:
     """
     Decorator to create stages with configurable options.
@@ -155,8 +132,8 @@ def work_pool(
             retries, 
             multi_proc, 
             [f for _ in range(num_workers)], 
-            merge,
-            choose,
+            fork_merge,
+            PathChoice.All if fork_merge else PathChoice.One,
         )
     
     return decorator
@@ -166,8 +143,7 @@ def mix_pool(
     buffer: int = 1,
     retries: int = 1,
     multi_proc: bool = False,
-    choose: PathChoice = PathChoice.One,
-    merge: Callable[[list[Any]], Any] | None = None
+    fork_merge: Callable[[list[Any]], Any] | None = None
 ) -> Callable[[Callable[[], list[StageFunc]]], Stage]:
     def decorator(fs: Callable[[], list[Callable]]) -> Stage:
         return Stage(
@@ -175,8 +151,8 @@ def mix_pool(
             retries, 
             multi_proc, 
             fs(), 
-            merge,
-            choose,
+            fork_merge,
+            PathChoice.All if fork_merge else PathChoice.One,
         )
     
     return decorator
