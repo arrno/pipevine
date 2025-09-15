@@ -14,6 +14,7 @@ from async_util import (
     mp_to_async_queue, 
     async_to_mp_queue, 
     multiplex_async_queues,
+    multiplex_and_merge_async_queues,
     make_broadcast_inbounds,
     make_shared_inbound_for_pool, 
     SENTINEL
@@ -54,21 +55,29 @@ class Stage:
         self.inbound = inbound
 
         async def _run_async():
+            merge = self.merge if self.merge != None else lambda x: x
+
             if not self.multi_proc:
                 # ---- ASYNC workers ----
                 if self._choose is PathChoice.One:
                     shared_in = await make_shared_inbound_for_pool(
                         inbound, n_workers=len(self.functions), maxsize=self.buffer
                     )
-                    outqs = [worker(fn, 1, self.retries, shared_in)
-                             for fn in self.functions]
+                    outqs = [
+                        worker(fn, 1, self.retries, shared_in) 
+                        for fn in self.functions
+                    ]
+
+                    muxed = multiplex_async_queues(outqs)
                 else:  # PathType.All
                     sizes = _split_buffer_across(len(self.functions), self.buffer)
                     per_ins = await make_broadcast_inbounds(inbound, sizes=sizes)
-                    outqs = [worker(fn, 1, self.retries, q_in)
-                             for fn, q_in in zip(self.functions, per_ins)]
+                    outqs = [
+                        worker(fn, 1, self.retries, q_in) 
+                        for fn, q_in in zip(self.functions, per_ins)
+                    ]
 
-                muxed = multiplex_async_queues(outqs)
+                    muxed = multiplex_and_merge_async_queues(outqs, merge)
 
             else:
                 # ---- MP workers ----
@@ -82,17 +91,20 @@ class Stage:
                     for fn in self.functions:
                         mp_out, _proc = mp_worker(fn, 1, self.retries, mp_in)
                         outqs_async.append(mp_to_async_queue(mp_out))
+
                     muxed = multiplex_async_queues(outqs_async)
 
                 else:  # PathType.All
                     sizes = _split_buffer_across(len(self.functions), self.buffer)
                     per_ins = await make_broadcast_inbounds(inbound, sizes=sizes)
                     outqs_async: list[Queue] = []
+                    
                     for fn, q_in in zip(self.functions, per_ins):
                         mp_in = async_to_mp_queue(q_in, ctx_method="spawn")
                         mp_out, _proc = mp_worker(fn, 1, self.retries, mp_in)
                         outqs_async.append(mp_to_async_queue(mp_out))
-                    muxed = multiplex_async_queues(outqs_async)
+
+                    muxed = multiplex_and_merge_async_queues(outqs_async, merge)
 
             # pipe muxed -> outbound
             while True:

@@ -88,7 +88,7 @@ async def _multiplex_async_queues_task(queues: list[asyncio.Queue]) -> asyncio.Q
     asyncio.create_task(supervisor())
     return outbound
 
-async def _multiplex_and_merge_async_queues(
+async def _multiplex_and_merge_async_queues_task(
     queues: list[asyncio.Queue],
     merge: Callable[[list[Any]], Any],
     *,
@@ -169,6 +169,26 @@ def multiplex_async_queues(queues: list[asyncio.Queue]) -> asyncio.Queue:
     asyncio.create_task(_runner())
     return outbound
 
+def multiplex_and_merge_async_queues(
+    queues: list[asyncio.Queue],
+    merge: Callable[[list[Any]], Any],
+) -> asyncio.Queue:
+    """
+    Synchronous wrapper that schedules the multiplexer and returns the outbound queue immediately.
+    """
+    outbound: asyncio.Queue = asyncio.Queue(maxsize=1)
+
+    async def _runner():
+        muxed = await _multiplex_and_merge_async_queues_task(queues, merge)
+        # Pipe muxed -> outbound
+        while True:
+            item = await muxed.get()
+            await outbound.put(item)
+            if item is SENTINEL:
+                break
+
+    asyncio.create_task(_runner())
+    return outbound
 
 async def make_shared_inbound_for_pool(
     upstream: asyncio.Queue,
