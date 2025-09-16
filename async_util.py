@@ -3,12 +3,17 @@ from __future__ import annotations
 import asyncio
 import threading
 from multiprocessing import get_context
+import multiprocessing
 from typing import Any, Optional, Callable
+from enum import Enum, auto
 
-SENTINEL = object()
+class Marker(Enum):
+    STOP = auto()
+    
+SENTINEL = Marker.STOP
 
 # ---- MP -> Async bridge ----
-def mp_to_async_queue(mpq, *, loop: Optional[asyncio.AbstractEventLoop] = None) -> asyncio.Queue:
+def mp_to_async_queue(mpq: multiprocessing.Queue, *, loop: Optional[asyncio.AbstractEventLoop] = None) -> asyncio.Queue:
     """
     Returns an asyncio.Queue. A background thread forwards items from mpq into it.
     Stops when SENTINEL is seen (and forwards it).
@@ -18,7 +23,7 @@ def mp_to_async_queue(mpq, *, loop: Optional[asyncio.AbstractEventLoop] = None) 
 
     aq: asyncio.Queue = asyncio.Queue(maxsize=1)
 
-    def _forward():
+    def _forward() -> None:
         try:
             while True:
                 item = mpq.get()  # blocking in thread
@@ -35,7 +40,7 @@ def mp_to_async_queue(mpq, *, loop: Optional[asyncio.AbstractEventLoop] = None) 
 
 
 # ---- Async -> MP bridge ----
-def async_to_mp_queue(aq: asyncio.Queue, *, ctx_method: str = "spawn"):
+def async_to_mp_queue(aq: asyncio.Queue, *, ctx_method: str = "spawn") -> multiprocessing.Queue:
     """
     Returns a new MPQueue and starts an async task that forwards from aq -> mpq.
     Stops when SENTINEL is seen (and forwards it).
@@ -43,7 +48,7 @@ def async_to_mp_queue(aq: asyncio.Queue, *, ctx_method: str = "spawn"):
     ctx = get_context(ctx_method)
     mpq = ctx.Queue(maxsize=1)
 
-    async def _pump():
+    async def _pump() -> None:
         try:
             while True:
                 item = await aq.get()
@@ -66,7 +71,7 @@ async def _multiplex_async_queues_task(queues: list[asyncio.Queue]) -> asyncio.Q
 
     outbound: asyncio.Queue = asyncio.Queue(maxsize=1)
 
-    async def forward(q: asyncio.Queue):
+    async def forward(q: asyncio.Queue) -> None:
         try:
             while True:
                 item = await q.get()
@@ -77,7 +82,7 @@ async def _multiplex_async_queues_task(queues: list[asyncio.Queue]) -> asyncio.Q
             # ensure this forwarder is "counted down" even on error/cancel
             pass
 
-    async def supervisor():
+    async def supervisor() -> None:
         # Run one forwarder per queue
         async with asyncio.TaskGroup() as tg:
             for q in queues:
@@ -116,7 +121,7 @@ async def _multiplex_and_merge_async_queues_task(
             if x is SENTINEL:
                 return
 
-    async def supervisor():
+    async def supervisor() -> None:
         try:
             while True:
                 # One "barrier" get per queue for this round
@@ -157,7 +162,7 @@ def multiplex_async_queues(queues: list[asyncio.Queue]) -> asyncio.Queue:
     """
     outbound: asyncio.Queue = asyncio.Queue(maxsize=1)
 
-    async def _runner():
+    async def _runner() -> None:
         muxed = await _multiplex_async_queues_task(queues)
         # Pipe muxed -> outbound
         while True:
@@ -178,7 +183,7 @@ def multiplex_and_merge_async_queues(
     """
     outbound: asyncio.Queue = asyncio.Queue(maxsize=1)
 
-    async def _runner():
+    async def _runner() -> None:
         muxed = await _multiplex_and_merge_async_queues_task(queues, merge)
         # Pipe muxed -> outbound
         while True:
@@ -202,7 +207,7 @@ async def make_shared_inbound_for_pool(
     """
     shared: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
 
-    async def pump():
+    async def pump() -> None:
         try:
             while True:
                 item = await upstream.get()
@@ -228,7 +233,7 @@ async def make_broadcast_inbounds(
     n = len(sizes)
     outs: list[asyncio.Queue] = [asyncio.Queue(maxsize=sizes[i]) for i in range(n)]
 
-    async def pump():
+    async def pump() -> None:
         try:
             while True:
                 item = await upstream.get()

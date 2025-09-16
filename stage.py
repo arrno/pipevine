@@ -19,12 +19,12 @@ from async_util import (
     make_shared_inbound_for_pool, 
     SENTINEL
 )
-from typing import Optional
+from typing import Optional, TypeAlias
 
 T = TypeVar("T")
 Result: TypeAlias = T | Err
 
-type StageFunc = Callable[[Any], Any]
+StageFunc: TypeAlias = Callable[[Any], Any]
 
 class PathChoice(Enum):
     One = auto() # item takes on func path in stage
@@ -54,7 +54,7 @@ class Stage:
         outbound: Queue = Queue(maxsize=self.buffer)
         self.inbound = inbound
 
-        async def _run_async():
+        async def _run_async() -> None:
             merge = self.merge if self.merge != None else lambda x: x
 
             if not self.multi_proc:
@@ -80,6 +80,7 @@ class Stage:
                     muxed = multiplex_and_merge_async_queues(outqs, merge)
 
             else:
+                outqs_async: list[Queue] = []
                 # ---- MP workers ----
                 if self._choose is PathChoice.One:
                     shared_in = await make_shared_inbound_for_pool(
@@ -87,7 +88,6 @@ class Stage:
                     )
                     mp_in = async_to_mp_queue(shared_in, ctx_method="spawn")
 
-                    outqs_async: list[Queue] = []
                     for fn in self.functions:
                         mp_out, _proc = mp_worker(fn, 1, self.retries, mp_in)
                         outqs_async.append(mp_to_async_queue(mp_out))
@@ -97,7 +97,6 @@ class Stage:
                 else:  # PathType.All
                     sizes = _split_buffer_across(len(self.functions), self.buffer)
                     per_ins = await make_broadcast_inbounds(inbound, sizes=sizes)
-                    outqs_async: list[Queue] = []
                     
                     for fn, q_in in zip(self.functions, per_ins):
                         mp_in = async_to_mp_queue(q_in, ctx_method="spawn")
@@ -170,6 +169,8 @@ def mix_pool(
     return decorator
 
 # Keep as_stage for backwards compatibility, but always with defaults
-def as_stage(func: Callable[[Any], Any]) -> Stage:
+def as_stage(func: Callable[[Any], Any] | Stage) -> Stage:
     """Simple stage decorator with defaults."""
+    if isinstance(func, Stage):
+        return func
     return Stage(1, 1, False, [func], None)

@@ -4,6 +4,7 @@ from typing import Callable, Any, TypeVar, Tuple
 from util import Result, unwrap, with_retry
 from multiprocessing import get_context, Queue as MPQueue
 from multiprocessing.process import BaseProcess
+from multiprocessing.queues import SimpleQueue
 from collections import deque
 from async_util import SENTINEL
 
@@ -18,7 +19,7 @@ def worker_no_buf(
     outbound: Queue = Queue(1)
     handler = with_retry(retries)(f)
 
-    async def run():
+    async def run() -> None:
         try:
             while True:
                 val = await inbound.get()
@@ -49,7 +50,7 @@ def worker(
     handler = with_retry(retries)(f)
     buff_in: Queue[Any] = Queue(max(1, buf_size))
 
-    async def buff():
+    async def buff() -> None:
         try:
             while True:
                 val = await inbound.get()
@@ -59,7 +60,7 @@ def worker(
         finally: 
             await shield(buff_in.put(SENTINEL))
 
-    async def run():
+    async def run() -> None:
         try:
             while True:
                 # pull
@@ -83,6 +84,49 @@ def worker(
     asyncio.create_task(run())
     return outbound
 
+
+def _mp_task(f: Callable, inbound: MPQueue, outbound: MPQueue, retries: int, buf_size: int) -> None:
+    from queue import Empty
+    handler = with_retry(retries)(f)
+
+    ring: deque[Any] = deque()
+    sentinel_seen = False
+
+    try:
+        while True:
+            if buf_size > 0 and not sentinel_seen:
+                try:
+                    while len(ring) < buf_size and not sentinel_seen:
+                        item = inbound.get_nowait()
+                        if item == SENTINEL:
+                            sentinel_seen = True
+                            break
+                        ring.append(item)
+                except Empty:
+                    pass
+            
+            if not ring and sentinel_seen:
+                break
+
+            # If nothing buffered, block for the next item
+            if not ring:
+                val = inbound.get()
+                if val == SENTINEL:
+                    break  # no buffered work; terminate
+                ring.append(val)
+
+            # Process one item
+            val = ring.popleft()
+            result = handler(val)
+            # Note: mp_worker runs in separate process, can't await async functions
+            # async functions should be wrapped or converted to sync before mp_worker
+            outbound.put(unwrap(result))
+
+    except Exception as e:
+        print(e)    
+    finally: 
+        outbound.put(SENTINEL)
+
 def mp_worker(
     f: Callable[[Any], Result[T]], 
     buf_size: int, 
@@ -91,54 +135,12 @@ def mp_worker(
 ) -> Tuple[MPQueue, BaseProcess]:
     
     ctx = get_context("spawn")
-    outbound: MPQueue = ctx.Queue(1)
+    outbound: MPQueue = MPQueue(1)
     buf_size = max(0, buf_size)
 
-    def run(inbound: MPQueue, outbound: MPQueue):
-        from queue import Empty
-        handler = with_retry(retries)(f)
-
-        ring: deque[T] = deque()
-        sentinel_seen = False
-
-        try:
-            while True:
-                if buf_size > 0 and not sentinel_seen:
-                    try:
-                        while len(ring) < buf_size and not sentinel_seen:
-                            item = inbound.get_nowait()
-                            if item is SENTINEL:
-                                sentinel_seen = True
-                                break
-                            ring.append(item)
-                    except Empty:
-                        pass
-                
-                if not ring and sentinel_seen:
-                    break
-
-                # If nothing buffered, block for the next item
-                if not ring:
-                    val = inbound.get()
-                    if val is SENTINEL:
-                        break  # no buffered work; terminate
-                    ring.append(val)
-
-                # Process one item
-                val = ring.popleft()
-                result = handler(val)
-                # Note: mp_worker runs in separate process, can't await async functions
-                # async functions should be wrapped or converted to sync before mp_worker
-                outbound.put(unwrap(result))
-
-        except Exception as e:
-            print(e)    
-        finally: 
-            outbound.put(SENTINEL)
-
     proc = ctx.Process(
-        target=run, 
-        args=(inbound, outbound), 
+        target=_mp_task, 
+        args=(f, inbound, outbound, retries, buf_size), 
         daemon=True,
     )
     proc.start()
