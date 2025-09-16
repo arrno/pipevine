@@ -21,14 +21,14 @@ def mp_to_async_queue(mpq: multiprocessing.Queue, *, loop: Optional[asyncio.Abst
     if loop is None:
         loop = asyncio.get_running_loop()
 
-    aq: asyncio.Queue = asyncio.Queue(maxsize=1)
+    aq: asyncio.Queue = asyncio.Queue()
 
     def _forward() -> None:
         try:
             while True:
                 item = mpq.get()  # blocking in thread
                 loop.call_soon_threadsafe(aq.put_nowait, item)
-                if item is SENTINEL:
+                if item == SENTINEL:
                     break
         except Exception as e:
             # You may want to log this
@@ -44,21 +44,49 @@ def async_to_mp_queue(aq: asyncio.Queue, *, ctx_method: str = "spawn") -> multip
     """
     Returns a new MPQueue and starts an async task that forwards from aq -> mpq.
     Stops when SENTINEL is seen (and forwards it).
+    
+    NOTE: This function has a race condition - the returned MP queue may not
+    immediately have data available. Caller should allow time for the async
+    task to pump data, or better yet, use async_to_mp_queue_with_ready().
     """
     ctx = get_context(ctx_method)
-    mpq = ctx.Queue(maxsize=1)
+    mpq = ctx.Queue()
 
     async def _pump() -> None:
         try:
             while True:
                 item = await aq.get()
                 mpq.put(item)  # blocking, but OK in event loop since put() is quick; if worried wrap in to_thread
-                if item is SENTINEL:
+                if item == SENTINEL:
                     break
         except Exception:
             mpq.put(SENTINEL)
 
     asyncio.create_task(_pump())
+    return mpq
+
+async def async_to_mp_queue_with_ready(aq: asyncio.Queue, *, ctx_method: str = "spawn") -> multiprocessing.Queue:
+    """
+    Returns a new MPQueue and starts an async task that forwards from aq -> mpq.
+    Ensures the pump task has started before returning.
+    """
+    ctx = get_context(ctx_method)
+    mpq = ctx.Queue()
+    ready = asyncio.Event()
+
+    async def _pump() -> None:
+        ready.set()  # Signal that pump has started
+        try:
+            while True:
+                item = await aq.get()
+                mpq.put(item)
+                if item == SENTINEL:
+                    break
+        except Exception:
+            mpq.put(SENTINEL)
+
+    asyncio.create_task(_pump())
+    await ready.wait()  # Wait for pump to start
     return mpq
 
 from typing import Any
