@@ -476,6 +476,7 @@ class TestStageIntegration:
         await inbound.put(2)
         await inbound.put(3)
         await inbound.put(SENTINEL)
+        await inbound.put(SENTINEL)
         
         # Both stages process same input
         double_out = double_it.run(inbound)
@@ -485,19 +486,25 @@ class TestStageIntegration:
         double_results = []
         triple_results = []
         
-        # Get results from double stage
-        while True:
-            item = await double_out.get()
-            if item is SENTINEL:
-                break
-            double_results.append(item)
+        async def do_double():
+            # Get results from double stage
+            while True:
+                item = await double_out.get()
+                if item is SENTINEL:
+                    break
+                double_results.append(item)
         
-        # Get results from triple stage  
-        while True:
-            item = await triple_out.get()
-            if item is SENTINEL:
-                break
-            triple_results.append(item)
+        async def do_triple():
+            # Get results from triple stage  
+            while True:
+                item = await triple_out.get()
+                if item is SENTINEL:
+                    break
+                triple_results.append(item)
+        
+        async with asyncio.TaskGroup() as tg:
+                tg.create_task(do_double())
+                tg.create_task(do_triple())
         
         # Since both stages share the input queue, they'll split the items
         # Total results should account for all input items
