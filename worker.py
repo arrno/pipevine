@@ -1,7 +1,7 @@
 import asyncio
 from asyncio import Queue, shield
 from typing import Callable, Any, TypeVar, Tuple
-from util import Result, unwrap, with_retry
+from util import Result, unwrap, with_retry, is_ok
 from multiprocessing import get_context, Queue as MPQueue
 from multiprocessing.process import BaseProcess
 from multiprocessing.queues import SimpleQueue
@@ -28,7 +28,9 @@ def worker_no_buf(
                 result = handler(val)
                 if asyncio.iscoroutine(result):
                     result = await result
-                await outbound.put(result)
+                if not is_ok(result):
+                    continue
+                await outbound.put(unwrap(result))
         finally:
             await shield(outbound.put(SENTINEL))
 
@@ -73,6 +75,8 @@ def worker(
                 result = handler(val)
                 if asyncio.iscoroutine(result):
                     result = await result
+                if not is_ok(result):
+                    continue
                 await outbound.put(unwrap(result))
 
         except Exception as e:
@@ -120,6 +124,8 @@ def _mp_task(f: Callable, inbound: MPQueue, outbound: MPQueue, retries: int, buf
             result = handler(val)
             # Note: mp_worker runs in separate process, can't await async functions
             # async functions should be wrapped or converted to sync before mp_worker
+            if not is_ok(result):
+                continue
             outbound.put(unwrap(result))
 
     except Exception as e:

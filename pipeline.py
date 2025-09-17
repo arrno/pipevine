@@ -76,10 +76,10 @@ class Pipeline:
     async def run(self) -> Result:
 
         if not self.generator:
-            Err("no generator")
-            self.__handle_err(Err.message)
-            self.__handle_log(Err.message)
-            return Err
+            err = Err("no generator")
+            self.__handle_err(err.message)
+            self.__handle_log(err.message)
+            return err
         
         stream = self.__generate(self.generator)
         for stage in self.stages:
