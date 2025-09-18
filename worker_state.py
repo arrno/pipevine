@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, Unpack
 
 @dataclass
 class WorkerState:
@@ -9,7 +9,7 @@ class WorkerState:
     def get(self, key: str, default: Any = None) -> Any:
         return self.values.get(key, default)
     
-    def update(self, **kwargs: dict[str, Any]) -> None:
+    def update(self, **kwargs: Any) -> None:
         self.values.update(kwargs)
 
 class WorkerHandler(Protocol):
