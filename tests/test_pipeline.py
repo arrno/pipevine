@@ -150,7 +150,45 @@ class TestPipelineExecution:
         assert is_ok(result)
         # Results would be: (1+1)*2=4, (2+1)*2=6, (3+1)*2=8
         # But we don't capture the final output in this test
-    
+
+    @pytest.mark.asyncio
+    async def test_multi_stage_pipeline_num_workers(self):
+        @work_pool(num_workers=2)
+        def add_one(x: int, state: WorkerState) -> int:
+            return x + 1
+        
+        @work_pool(num_workers=3)
+        def multiply_two(x: int, state: WorkerState) -> int:
+            return x * 2
+        
+        data = [1, 2, 3]
+        pipeline = Pipeline(iter(data)) >> add_one >> multiply_two
+        pipeline.log = False
+        
+        result = await pipeline.run()
+        
+        assert is_ok(result)
+        # Results would be: (1+1)*2=4, (2+1)*2=6, (3+1)*2=8
+        # But we don't capture the final output in this test
+
+    @pytest.mark.asyncio
+    async def test_multi_stage_mp_pipeline(self):
+        @work_pool(num_workers=2, multi_proc=True)
+        def add_one(x: int, state: WorkerState) -> int:
+            return x + 1
+
+        @work_pool(num_workers=3, multi_proc=True)
+        def multiply_two(x: int, state: WorkerState) -> int:
+            return x * 2
+
+        data = range(10)
+        pipeline = Pipeline(iter(data)) >> add_one >> multiply_two
+        pipeline.log = False
+        
+        result = await pipeline.run()
+        
+        assert is_ok(result)
+
     @pytest.mark.asyncio
     async def test_pipeline_with_no_generator(self):
         @work_pool()

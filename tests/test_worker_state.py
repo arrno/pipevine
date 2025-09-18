@@ -8,7 +8,7 @@ from typing import Any
 from worker import worker, worker_no_buf, mp_worker
 from async_util import SENTINEL
 from worker_state import WorkerState, WorkerHandler
-
+from stage import work_pool
 
 class TestWorkerStatePersistence:
     """Test WorkerState persistence across multiple handler calls."""
@@ -105,6 +105,7 @@ class TestWorkerStatePersistence:
         """Test that different workers maintain separate state."""
         inbound = asyncio.Queue(maxsize=20)
         
+        @work_pool(buffer=3, retries=1, num_workers=3)
         def worker_id_handler(data: int, state: WorkerState) -> tuple[int, int]:
             # Each worker gets a unique ID based on first call
             if 'worker_id' not in state.values:
@@ -118,8 +119,10 @@ class TestWorkerStatePersistence:
             await inbound.put(i)
         await inbound.put(SENTINEL)
         
+        # TODO this is kind of a race condition. It's possible though unlikely one worker will get all tasks
+
         # Create multiple workers (num_workers=3)
-        outbound = worker(worker_id_handler, 3, 1, inbound)
+        outbound = worker_id_handler.run(inbound)
         
         # Collect results
         results = []
@@ -203,6 +206,7 @@ class SimpleConnection:
     def __init__(self):
         self.created_at = mp.current_process().pid
         self.call_count = 0
+        self.non_picklable = lambda x: x
     
     def process_data(self, data):
         self.call_count += 1

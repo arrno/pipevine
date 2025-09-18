@@ -65,7 +65,12 @@ def async_to_mp_queue(aq: asyncio.Queue, *, ctx_method: str = "spawn") -> multip
     asyncio.create_task(_pump())
     return mpq
 
-async def async_to_mp_queue_with_ready(aq: asyncio.Queue, *, ctx_method: str = "spawn") -> multiprocessing.Queue:
+async def async_to_mp_queue_with_ready(
+    aq: asyncio.Queue,
+    *,
+    ctx_method: str = "spawn",
+    sentinel_count: Optional[int] = 1,
+) -> multiprocessing.Queue:
     """
     Returns a new MPQueue and starts an async task that forwards from aq -> mpq.
     Ensures the pump task has started before returning.
@@ -76,12 +81,15 @@ async def async_to_mp_queue_with_ready(aq: asyncio.Queue, *, ctx_method: str = "
 
     async def _pump() -> None:
         ready.set()  # Signal that pump has started
+        sentinels_seen = 0
         try:
             while True:
                 item = await aq.get()
                 mpq.put(item)
-                if item == SENTINEL:
-                    break
+                if item is SENTINEL:
+                    sentinels_seen += 1
+                    if sentinel_count is not None and sentinels_seen >= sentinel_count:
+                        break
         except Exception:
             mpq.put(SENTINEL)
 

@@ -1,8 +1,10 @@
 import asyncio
+import pickle
 from asyncio import Queue, shield
-from typing import Callable, Any, TypeVar, Tuple
-from util import Result, unwrap, with_retry, is_ok
-from multiprocessing import get_context, Queue as MPQueue
+from typing import Any, TypeVar, Tuple, Sequence
+from util import unwrap, with_retry, is_ok
+import multiprocessing as mp
+from multiprocessing import get_all_start_methods, Queue as MPQueue
 from multiprocessing.process import BaseProcess
 from worker_state import WorkerState, WorkerHandler
 from collections import deque
@@ -91,6 +93,29 @@ def worker(
     return outbound
 
 
+def _is_picklable(fn: WorkerHandler) -> bool:
+    try:
+        pickle.dumps(fn)
+        return True
+    except Exception:
+        return False
+
+
+def _choose_ctx_method(
+    fns: Sequence[WorkerHandler],
+    preferred: str | None = None,
+) -> str:
+    if preferred is not None:
+        return preferred
+
+    methods = get_all_start_methods()
+    if "spawn" in methods and all(_is_picklable(fn) for fn in fns):
+        return "spawn"
+    if "fork" in methods:
+        return "fork"
+    return methods[0] if methods else "spawn"
+
+
 def _mp_task(f: WorkerHandler, inbound: MPQueue, outbound: MPQueue, retries: int, buf_size: int) -> None:
     from queue import Empty
     handler = with_retry(retries)(f)
@@ -137,20 +162,28 @@ def _mp_task(f: WorkerHandler, inbound: MPQueue, outbound: MPQueue, retries: int
         outbound.put(SENTINEL)
 
 def mp_worker(
-    f: WorkerHandler, 
-    buf_size: int, 
+    f: WorkerHandler,
+    buf_size: int,
     retries: int,
     inbound: MPQueue,
+    *,
+    ctx_method: str | None = None,
 ) -> Tuple[MPQueue, BaseProcess]:
-    
-    ctx = get_context("spawn")
-    outbound: MPQueue = MPQueue(1)
+
+    method = _choose_ctx_method((f,), ctx_method)
+    ctx = mp.get_context(method)
+    outbound: MPQueue = ctx.Queue(1)
     buf_size = max(0, buf_size)
 
-    proc = ctx.Process(
-        target=_mp_task, 
-        args=(f, inbound, outbound, retries, buf_size), 
+    process_factory = getattr(ctx, "Process")
+    proc = process_factory(
+        target=_mp_task,
+        args=(f, inbound, outbound, retries, buf_size),
         daemon=True,
     )
     proc.start()
     return outbound, proc
+
+def default_mp_ctx_method(functions: Sequence[WorkerHandler]) -> str:
+    """Expose preferred ctx method so async bridges can share it."""
+    return _choose_ctx_method(functions, None)
