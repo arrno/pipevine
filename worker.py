@@ -4,20 +4,21 @@ from typing import Callable, Any, TypeVar, Tuple
 from util import Result, unwrap, with_retry, is_ok
 from multiprocessing import get_context, Queue as MPQueue
 from multiprocessing.process import BaseProcess
-from multiprocessing.queues import SimpleQueue
+from worker_state import WorkerState, WorkerHandler
 from collections import deque
 from async_util import SENTINEL
 
 T = TypeVar("T")
 
 def worker_no_buf(
-    f: Callable[[Any], Result[T]], 
+    f: WorkerHandler, 
     retries: int,
     inbound: Queue[Any],
 ) -> Queue[Any]: 
     
     outbound: Queue = Queue(1)
     handler = with_retry(retries)(f)
+    state = WorkerState({})
 
     async def run() -> None:
         try:
@@ -25,7 +26,7 @@ def worker_no_buf(
                 val = await inbound.get()
                 if val is SENTINEL:
                     break
-                result = handler(val)
+                result = handler(val, state)
                 if asyncio.iscoroutine(result):
                     result = await result
                 if not is_ok(result):
@@ -39,7 +40,7 @@ def worker_no_buf(
 
 # async wrapper
 def worker(
-    f: Callable[[Any], Result[T]], 
+    f: WorkerHandler, 
     buf_size: int, 
     retries: int,
     inbound: Queue[Any],
@@ -51,6 +52,7 @@ def worker(
     outbound: Queue = Queue(1)
     handler = with_retry(retries)(f)
     buff_in: Queue[Any] = Queue(max(1, buf_size))
+    state = WorkerState({})
 
     async def buff() -> None:
         try:
@@ -72,7 +74,7 @@ def worker(
                 if val is SENTINEL:
                     break
                 
-                result = handler(val)
+                result = handler(val, state)
                 if asyncio.iscoroutine(result):
                     result = await result
                 if not is_ok(result):
@@ -89,12 +91,13 @@ def worker(
     return outbound
 
 
-def _mp_task(f: Callable, inbound: MPQueue, outbound: MPQueue, retries: int, buf_size: int) -> None:
+def _mp_task(f: WorkerHandler, inbound: MPQueue, outbound: MPQueue, retries: int, buf_size: int) -> None:
     from queue import Empty
     handler = with_retry(retries)(f)
 
     ring: deque[Any] = deque()
     sentinel_seen = False
+    state = WorkerState({})
 
     try:
         while True:
@@ -121,7 +124,7 @@ def _mp_task(f: Callable, inbound: MPQueue, outbound: MPQueue, retries: int, buf
 
             # Process one item
             val = ring.popleft()
-            result = handler(val)
+            result = handler(val, state)
             # Note: mp_worker runs in separate process, can't await async functions
             # async functions should be wrapped or converted to sync before mp_worker
             if not is_ok(result):
@@ -134,7 +137,7 @@ def _mp_task(f: Callable, inbound: MPQueue, outbound: MPQueue, retries: int, buf
         outbound.put(SENTINEL)
 
 def mp_worker(
-    f: Callable[[Any], Result[T]], 
+    f: WorkerHandler, 
     buf_size: int, 
     retries: int,
     inbound: MPQueue,

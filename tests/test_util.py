@@ -4,7 +4,7 @@ import pytest
 from typing import Any
 
 from util import (
-    Err, Result, is_err, get_err, is_ok, unwrap, unwrap_or, 
+    Err, is_err, get_err, is_ok, unwrap, unwrap_or, 
     err_as_value, with_retry
 )
 

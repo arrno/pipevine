@@ -2,9 +2,8 @@
 
 import asyncio
 import pytest
-from typing import Any, Callable
-from unittest.mock import patch, MagicMock
-
+from typing import Any
+from worker_state import WorkerState
 from stage import Stage, work_pool, mix_pool, as_stage, PathChoice
 from async_util import SENTINEL
 
@@ -13,7 +12,7 @@ class TestStageClass:
     """Test the Stage class directly."""
     
     def test_stage_creation(self):
-        def dummy_func(x: int) -> int:
+        def dummy_func(x: int, state: WorkerState) -> int:
             return x * 2
         
         stage = Stage(
@@ -35,7 +34,7 @@ class TestStageClass:
     
     @pytest.mark.asyncio
     async def test_stage_run_single_function_async(self):
-        def double(x: int) -> int:
+        def double(x: int, state: WorkerState) -> int:
             return x * 2
         
         stage = Stage(
@@ -69,10 +68,10 @@ class TestStageClass:
     
     @pytest.mark.asyncio 
     async def test_stage_run_multiple_functions_async(self):
-        def add_one(x: int) -> int:
+        def add_one(x: int, state: WorkerState) -> int:
             return x + 1
         
-        def multiply_two(x: int) -> int:
+        def multiply_two(x: int, state: WorkerState) -> int:
             return x * 2
         
         stage = Stage(
@@ -107,7 +106,7 @@ class TestStageClass:
     
     @pytest.mark.asyncio
     async def test_stage_close(self):
-        def identity(x: Any) -> Any:
+        def identity(x: Any, state: WorkerState) -> Any:
             return x
         
         stage = Stage(
@@ -135,7 +134,7 @@ class TestWorkPool:
     
     def test_work_pool_default_params(self):
         @work_pool()
-        def simple_func(x: int) -> int:
+        def simple_func(x: int, state: WorkerState) -> int:
             return x + 1
         
         assert isinstance(simple_func, Stage)
@@ -148,7 +147,7 @@ class TestWorkPool:
     
     def test_work_pool_custom_params(self):
         @work_pool(buffer=10, retries=5, num_workers=3, multi_proc=True)
-        def custom_func(x: int) -> int:
+        def custom_func(x: int, state: WorkerState) -> int:
             return x * 3
         
         assert isinstance(custom_func, Stage)
@@ -164,7 +163,7 @@ class TestWorkPool:
             return sum(results)
         
         @work_pool(num_workers=2, fork_merge=merger)
-        def add_ten(x: int) -> int:
+        def add_ten(x: int, state: WorkerState) -> int:
             return x + 10
         
         assert isinstance(add_ten, Stage)
@@ -175,7 +174,7 @@ class TestWorkPool:
     @pytest.mark.asyncio
     async def test_work_pool_execution(self):
         @work_pool(buffer=3, num_workers=2)
-        async def async_double(x: int) -> int:
+        async def async_double(x: int, state: WorkerState) -> int:
             await asyncio.sleep(0.01)  # Small delay
             return x * 2
         
@@ -204,8 +203,8 @@ class TestMixPool:
         @mix_pool()
         def multi_functions():
             return [
-                lambda x: x + 1,
-                lambda x: x * 2
+                lambda x, s: x + 1,
+                lambda x, s: x * 2
             ]
         
         assert isinstance(multi_functions, Stage)
@@ -223,9 +222,9 @@ class TestMixPool:
         @mix_pool(buffer=20, retries=2, multi_proc=True, fork_merge=merger)
         def mixed_analysis():
             return [
-                lambda x: x ** 2,
-                lambda x: x ** 3,
-                lambda x: x ** 4
+                lambda x, s: x ** 2,
+                lambda x, s: x ** 3,
+                lambda x, s: x ** 4
             ]
         
         assert isinstance(mixed_analysis, Stage)
@@ -241,8 +240,8 @@ class TestMixPool:
         @mix_pool(buffer=5)
         def math_operations():
             return [
-                lambda x: x + 10,  # Add 10
-                lambda x: x * 3    # Multiply by 3
+                lambda x, s: x + 10,  # Add 10
+                lambda x, s: x * 3    # Multiply by 3
             ]
         
         inbound = asyncio.Queue(maxsize=5)
@@ -266,8 +265,8 @@ class TestMixPool:
         @mix_pool(buffer=5)  
         def different_operations():
             return [
-                lambda x: x + 1,   # Add 1
-                lambda x: x * 10   # Multiply by 10
+                lambda x, s: x + 1,   # Add 1
+                lambda x, s: x * 10   # Multiply by 10
             ]
         
         inbound2 = asyncio.Queue(maxsize=5)
@@ -291,7 +290,7 @@ class TestAsStage:
     """Test the as_stage function."""
     
     def test_as_stage_creation(self):
-        def simple_func(x: int) -> int:
+        def simple_func(x: int, state: WorkerState) -> int:
             return x + 5
         
         stage = as_stage(simple_func)
@@ -306,7 +305,7 @@ class TestAsStage:
     
     @pytest.mark.asyncio
     async def test_as_stage_execution(self):
-        def increment(x: int) -> int:
+        def increment(x: int, state: WorkerState) -> int:
             return x + 1
         
         stage = as_stage(increment)
@@ -341,7 +340,7 @@ class TestPathChoice:
         """Test that PathChoice.One distributes items across workers."""
         
         def track_worker(worker_id):
-            def inner(x):
+            def inner(x, state: WorkerState):
                 return f"worker_{worker_id}_{x}"
             return inner
         
@@ -389,7 +388,7 @@ class TestStageIntegration:
         
         attempt_count = 0
         
-        def flaky_function(x: int) -> int:
+        def flaky_function(x: int, state: WorkerState) -> int:
             nonlocal attempt_count
             attempt_count += 1
             if x == 5 and attempt_count == 1:
@@ -430,12 +429,12 @@ class TestStageIntegration:
         
         # Stage 1: Add 1
         @work_pool(buffer=2)
-        def add_one(x: int) -> int:
+        def add_one(x: int, state: WorkerState) -> int:
             return x + 1
         
         # Stage 2: Multiply by 2  
         @work_pool(buffer=2)
-        def multiply_two(x: int) -> int:
+        def multiply_two(x: int, state: WorkerState) -> int:
             return x * 2
         
         # Input data
@@ -464,11 +463,11 @@ class TestStageIntegration:
         """Test multiple stages processing the same input concurrently."""
         
         @work_pool(buffer=2)
-        def double_it(x: int) -> int:
+        def double_it(x: int, state: WorkerState) -> int:
             return x * 2
         
         @work_pool(buffer=2) 
-        def triple_it(x: int) -> int:
+        def triple_it(x: int, state: WorkerState) -> int:
             return x * 3
         
         # Shared input

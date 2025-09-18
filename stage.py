@@ -6,13 +6,13 @@ from typing import (
     TypeAlias,
 )
 from worker import worker, mp_worker
+from worker_state import WorkerHandler
 from dataclasses import dataclass
 from util import Err
 import asyncio
 from asyncio import Queue
 from async_util import (
     mp_to_async_queue, 
-    async_to_mp_queue, 
     async_to_mp_queue_with_ready, 
     multiplex_async_queues,
     multiplex_and_merge_async_queues,
@@ -43,7 +43,7 @@ class Stage:
     buffer: int
     retries: int
     multi_proc: bool  # True => multiprocessing
-    functions: list[Callable[[Any], Any]]
+    functions: list[WorkerHandler]
     merge: Optional[Callable[[list[Any]], Any]] = None # TODO
     _choose: PathChoice = PathChoice.One
 
@@ -129,7 +129,7 @@ def work_pool(
     num_workers: int = 1,
     multi_proc: bool = False,
     fork_merge: Callable[[list[Any]], Any] | None = None
-) -> Callable[[StageFunc], Stage]:
+) -> Callable[[WorkerHandler], Stage]:
     """
     Decorator to create stages with configurable options.
     
@@ -138,7 +138,7 @@ def work_pool(
     @work_pool(buffer=10, retries=3)  # with options
     @work_pool(stage_type=StageType.Fork, merge=lambda results: sum(results))
     """
-    def decorator(f: StageFunc) -> Stage:
+    def decorator(f: WorkerHandler) -> Stage:
         return Stage(
             buffer, 
             retries, 
@@ -156,7 +156,7 @@ def mix_pool(
     retries: int = 1,
     multi_proc: bool = False,
     fork_merge: Callable[[list[Any]], Any] | None = None
-) -> Callable[[Callable[[], list[StageFunc]]], Stage]:
+) -> Callable[[Callable[[], list[WorkerHandler]]], Stage]:
     def decorator(fs: Callable[[], list[Callable]]) -> Stage:
         return Stage(
             buffer, 
@@ -170,7 +170,7 @@ def mix_pool(
     return decorator
 
 # Keep as_stage for backwards compatibility, but always with defaults
-def as_stage(func: Callable[[Any], Any] | Stage) -> Stage:
+def as_stage(func: WorkerHandler | Stage) -> Stage:
     """Simple stage decorator with defaults."""
     if isinstance(func, Stage):
         return func
