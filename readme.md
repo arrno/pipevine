@@ -1,15 +1,22 @@
 # Pypline
 
-A high-performance async pipeline processing library for Python that enables efficient, concurrent data processing with backpressure control and automatic error handling.
+[![Tests](https://github.com/arrno/pypline/actions/workflows/tests.yml/badge.svg)](https://github.com/arrno/pypline/actions/workflows/tests.yml)
+[![PyPI](https://img.shields.io/pypi/v/pypline.svg)](https://pypi.org/project/pypline/)
+[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+**Pypline** is a lightweight, high-performance async pipeline library for Python. It helps you build fast, **concurrent dataflows** that are easy to compose, resilient to failure, and tuned for real-world workloads.
+
+Think of it as a lighter alternative to frameworks like Celery, giving you **backpressure, retries, and flexible worker orchestration** without the infa commitment.
 
 ## Features
 
--   **Async-first design** with optional multiprocessing support
--   **Backpressure control** via configurable buffering
--   **Automatic retry logic** with configurable retry counts
--   **Flexible worker patterns**: pool identical workers or mix different functions
--   **Pipeline composition** with method chaining or operator overloading
--   **Error handling** with Result types and graceful degradation
+-   **🚀 Async-first core** with optional multiprocessing for CPU-bound tasks
+-   **📦 Backpressure control** via configurable buffering to prevent overload
+-   **🔄 Automatic retries** with per-stage retry policies
+-   **👥 Flexible worker patterns** via worker pools, branching, and mixed functions
+-   **🔗 Composable pipelines** using method chaining (.stage()) or operator overloading (>>)
+-   **🛡 Error-aware** results with Result types for graceful degradation
 
 ## Installation
 
@@ -43,11 +50,11 @@ result = await pipeline.run()
 
 ### Stages
 
-Stages are the building blocks of pypline pipelines. Each stage processes data through one or more worker functions with configurable concurrency and error handling.
+Stages are the building blocks of pipelines. Each stage processes data through one or more worker functions with configurable concurrency and error handling.
 
 All stage functions must conform to the **WorkerHandler protocol**, which requires two arguments:
 
--   `item`: The data item to process
+-   `item`: The data to process
 -   `state`: A `WorkerState` instance for maintaining persistent state across handler calls
 
 ### WorkerState

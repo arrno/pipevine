@@ -17,7 +17,7 @@ class TestPipelineCreation:
     
     def test_pipeline_creation_with_generator(self):
         data = [1, 2, 3, 4, 5]
-        pipeline = Pipeline(iter(data))
+        pipeline = Pipeline(iter(data), True)
         
         assert pipeline.generator is not None
         assert pipeline.stages == []
