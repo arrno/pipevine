@@ -88,9 +88,9 @@ Creates a stage with different worker functions, useful for heterogeneous proces
 )
 def analysis_stage():
     return [
-        lambda x, st: analyze_sentiment(x),
-        lambda x, st: extract_keywords(x),
-        lambda x, st: classify_topic(x)
+        analyze_sentiment,
+        extract_keywords,
+        classify_topic
     ]
 ```
 
