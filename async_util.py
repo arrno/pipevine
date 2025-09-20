@@ -120,9 +120,19 @@ async def _multiplex_async_queues_task(queues: list[asyncio.Queue]) -> asyncio.Q
 
     async def supervisor() -> None:
         # Run one forwarder per queue
-        async with asyncio.TaskGroup() as tg:
-            for q in queues:
-                tg.create_task(forward(q))
+        if hasattr(asyncio, "TaskGroup"):
+            async with asyncio.TaskGroup() as tg:
+                for q in queues:
+                    tg.create_task(forward(q))
+        else:
+            tasks = [asyncio.create_task(forward(q)) for q in queues]
+            try:
+                await asyncio.gather(*tasks)
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
         # All forwarders done => close downstream
         await outbound.put(SENTINEL)
 

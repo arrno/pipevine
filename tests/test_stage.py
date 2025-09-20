@@ -501,9 +501,15 @@ class TestStageIntegration:
                     break
                 triple_results.append(item)
         
-        async with asyncio.TaskGroup() as tg:
-                tg.create_task(do_double())
-                tg.create_task(do_triple())
+        await asyncio.gather(
+            do_double(), 
+            do_triple()
+        )
+
+        # 3.11+
+        # async with asyncio.TaskGroup() as tg:
+        #         tg.create_task(do_double())
+        #         tg.create_task(do_triple())
         
         # Since both stages share the input queue, they'll split the items
         # Total results should account for all input items
