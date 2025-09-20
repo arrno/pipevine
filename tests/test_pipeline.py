@@ -538,29 +538,64 @@ class TestPipelineChaining:
         assert is_ok(result)
         assert len(pipeline.stages) == 2
     
-    # @pytest.mark.asyncio
-    # async def test_mixed_chaining_styles(self) -> None:
-    #     """Test mixing method chaining and operator chaining."""
+    @pytest.mark.asyncio
+    async def test_mixed_chaining_styles(self) -> None:
+        """Test mixing method chaining and operator chaining."""
         
-    #     @work_pool()
-    #     def stage1(x: int) -> int:
-    #         return x + 1
+        @work_pool()
+        def stage1(x: int, state: WorkerState) -> int:
+            return x + 1
         
-    #     @work_pool()
-    #     def stage2(x: int) -> int:  
-    #         return x * 2
+        @work_pool()
+        def stage2(x: int, state: WorkerState) -> int:  
+            return x * 2
         
-    #     @work_pool()
-    #     def stage3(x: int) -> int:
-    #         return x + 10
+        @work_pool()
+        def stage3(x: int, state: WorkerState) -> int:
+            return x + 10
         
-    #     data = [1, 2, 3]
-    #     pipeline = (Pipeline(iter(data))
-    #                .stage(stage1) 
-    #                >> stage2
-    #                .stage(stage3))
-    #     pipeline.log = False
+        data = [1, 2, 3]
+        pipeline = ((Pipeline(iter(data))
+                   .stage(stage1) 
+                   >> stage2)
+                   .stage(stage3))
+        pipeline.log = False
         
-    #     result = await pipeline.run()
-    #     assert is_ok(result)
-    #     assert len(pipeline.stages) == 3
+        result = await pipeline.run()
+        assert is_ok(result)
+        assert len(pipeline.stages) == 3
+
+    @pytest.mark.asyncio
+    async def test_chaining_pipelines(self) -> None:
+        """Test mixing method chaining stages and pipelines."""
+
+        results = []
+        
+        @work_pool()
+        def stage1(x: int, state: WorkerState) -> int:
+            return x + 1
+        
+        @work_pool()
+        def stage2(x: int, state: WorkerState) -> int:  
+            return x * 2
+        
+        @work_pool()
+        def stage3(x: int, state: WorkerState) -> int:
+            results.append(x + 10)
+            return x + 10
+        
+        data = [1, 2, 3]
+        expected = [14, 16, 18]
+        
+        result = await (
+            Pipeline(iter(data)) >> 
+            stage1 >> 
+            stage2 >> 
+            (
+                Pipeline(iter([])) >> 
+                stage3
+            )
+        ).run()
+
+        assert is_ok(result)
+        assert results == expected

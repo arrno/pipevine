@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import queue
 import asyncio
+from threading import Thread
 from asyncio import Queue, shield
-from typing import Any, Iterator
+from typing import Any, Iterator, AsyncIterator
 
 from .async_util import SENTINEL
 from .stage import Stage
@@ -21,18 +23,20 @@ class Pipeline:
         self.result: Result = "ok"
         self.gen(gen)
 
-    def gen(self, gen: Iterator[Any]) -> "Pipeline":
+    def gen(self, gen: Iterator[Any]) -> Pipeline:
         self.generator = gen
         return self
     
-    def stage(self, st: Stage) -> "Pipeline":
+    def stage(self, st: Stage | Pipeline) -> Pipeline:
+        if isinstance(st, Pipeline):
+            st.gen(self.as_iterator())
+            return st
         if len(st.functions) > 0:
             self.stages.append(st)
         return self
     
-    def __rshift__(self, other: Stage) -> "Pipeline":
-        self.stage(other)
-        return self
+    def __rshift__(self, other: Stage | Pipeline) -> Pipeline:
+        return self.stage(other)
 
     def __generate(self, gen: Iterator[Any]) -> asyncio.Queue[Any]:
         outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
@@ -89,3 +93,55 @@ class Pipeline:
             stream = stage.run(stream)
         await self.__drain(stream)
         return self.result
+    
+    async def as_async_generator(self) -> AsyncIterator:
+        if not self.generator:
+            raise RuntimeError("Pipeline.as_async_generator needs a self.generator")
+
+        stream = self.__generate(self.generator)
+        for stage in self.stages:
+            stream = stage.run(stream)
+
+        while True:
+            val = await stream.get()
+            yield val
+            if val is SENTINEL:
+                break
+
+    def as_iterator(self, max_buffer: int = 64) -> Iterator[Any]:
+        q: queue.Queue = queue.Queue(maxsize=max_buffer)
+        done = object()  # end-of-iteration marker distinct from SENTINEL
+        exception_holder: list[BaseException] = []
+
+        async def _pump() -> None:
+            try:
+                async for item in self.as_async_generator():
+                    # Push each item; if back-pressured, this awaits on the sync side.
+                    q.put(item)
+                    if item is SENTINEL:
+                        break
+            except BaseException as e:  # capture and deliver exceptions to sync side
+                exception_holder.append(e)
+            finally:
+                q.put(done)
+
+        def _runner() -> None:
+            loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(_pump())
+            finally:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.close()
+
+        t = Thread(target=_runner, daemon=True)
+        t.start()
+
+        while True:
+            item = q.get()
+            # Propagate async exceptions on the sync side
+            if exception_holder:
+                raise exception_holder[0]
+            if item is done:
+                return
+            yield item 

@@ -7,7 +7,7 @@
 
 **Parllel** is a lightweight, high-performance async pipeline library for Python. It helps you build fast, **concurrent dataflows** that are easy to compose, resilient to failure, and tuned for real-world workloads.
 
-Think of it as a lighter alternative to frameworks like Celery, giving you **backpressure, retries, and flexible worker orchestration** without the infa commitment.
+Think of it as a lighter alternative to frameworks like Celery, giving you **backpressure, retries, and flexible worker orchestration** without the infra commitment.
 
 ## Features
 
@@ -15,7 +15,7 @@ Think of it as a lighter alternative to frameworks like Celery, giving you **bac
 -   **📦 Backpressure control** via configurable buffering to prevent overload
 -   **🔄 Automatic retries** with per-stage retry policies
 -   **👥 Flexible worker patterns** via worker pools, branching, and mixed functions
--   **🔗 Composable pipelines** using method chaining (.stage()) or operator overloading (>>)
+-   **🔗 Composable pipelines** using method chaining `.stage()` or operator overloading `>>`
 -   **🛡 Error-aware** results with Result types for graceful degradation
 
 ## Installation
