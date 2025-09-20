@@ -1,21 +1,22 @@
 """Integration tests for end-to-end pipeline functionality."""
 
 import asyncio
-import pytest
-import time
-from typing import List, Dict, Any
 import json
+import time
+from typing import Any, Dict, List, Callable, Generator
 
-from pipeline import Pipeline
-from stage import work_pool, mix_pool, as_stage
-from util import is_ok
-from worker_state import WorkerState
+import pytest
+
+from parllel.pipeline import Pipeline
+from parllel.stage import as_stage, mix_pool, work_pool
+from parllel.util import is_ok
+from parllel.worker_state import WorkerState
 
 class TestBasicPipelineWorkflows:
     """Test common pipeline usage patterns."""
     
     @pytest.mark.asyncio
-    async def test_data_processing_pipeline(self):
+    async def test_data_processing_pipeline(self) -> None:
         """Test a typical data processing pipeline."""
         
         # Raw data
@@ -57,7 +58,7 @@ class TestBasicPipelineWorkflows:
         assert is_ok(result)
     
     @pytest.mark.asyncio
-    async def test_numeric_computation_pipeline(self):
+    async def test_numeric_computation_pipeline(self) -> None:
         """Test mathematical computation pipeline."""
         
         numbers = list(range(1, 101))  # 1 to 100
@@ -89,7 +90,7 @@ class TestBasicPipelineWorkflows:
         assert is_ok(result)
     
     @pytest.mark.asyncio
-    async def test_text_processing_pipeline(self):
+    async def test_text_processing_pipeline(self) -> None:
         """Test text processing pipeline."""
         
         texts = [
@@ -130,7 +131,7 @@ class TestAsyncPipelineWorkflows:
     """Test pipelines with async operations."""
     
     @pytest.mark.asyncio
-    async def test_async_io_simulation(self):
+    async def test_async_io_simulation(self) -> None:
         """Test pipeline simulating async I/O operations."""
         
         urls = [
@@ -182,7 +183,7 @@ class TestAsyncPipelineWorkflows:
         assert end_time - start_time < 0.2  # Should complete quickly due to async
     
     @pytest.mark.asyncio
-    async def test_mixed_sync_async_pipeline(self):
+    async def test_mixed_sync_async_pipeline(self) -> None:
         """Test pipeline mixing sync and async functions."""
         
         data = range(10)
@@ -217,7 +218,7 @@ class TestErrorHandlingWorkflows:
     """Test pipeline behavior under various error conditions."""
     
     @pytest.mark.asyncio
-    async def test_pipeline_with_recoverable_errors(self):
+    async def test_pipeline_with_recoverable_errors(self) -> None:
         """Test pipeline that handles and recovers from errors."""
         
         data = [1, 2, 0, 4, -1, 6, 7, 8]  # Includes problematic values
@@ -236,7 +237,7 @@ class TestErrorHandlingWorkflows:
             """Safe square root with retries."""
             if x < 0:
                 raise ValueError("Cannot take sqrt of negative number")
-            return x ** 0.5
+            return float(x ** 0.5)
         
         @work_pool(buffer=2)
         def format_result(x: float, state: WorkerState) -> str:
@@ -256,7 +257,7 @@ class TestErrorHandlingWorkflows:
         assert result is not None
     
     @pytest.mark.asyncio
-    async def test_early_termination_on_critical_error(self):
+    async def test_early_termination_on_critical_error(self) -> None:
         """Test pipeline that terminates early on critical errors."""
         
         data = range(100)  # Large dataset
@@ -288,7 +289,7 @@ class TestConcurrencyAndPerformance:
     """Test pipeline concurrency and performance characteristics."""
     
     @pytest.mark.asyncio
-    async def test_high_concurrency_pipeline(self):
+    async def test_high_concurrency_pipeline(self) -> None:
         """Test pipeline with high concurrency settings."""
         
         data = range(50)
@@ -329,7 +330,7 @@ class TestConcurrencyAndPerformance:
         assert processing_time < 2.0  # Should be much faster than sequential
     
     @pytest.mark.asyncio
-    async def test_backpressure_handling(self):
+    async def test_backpressure_handling(self) -> None:
         """Test pipeline backpressure with different buffer sizes."""
         
         data = range(100)
@@ -365,7 +366,7 @@ class TestComplexDataFlows:
     """Test complex data transformation scenarios."""
     
     @pytest.mark.asyncio
-    async def test_fan_out_aggregation_pattern(self):
+    async def test_fan_out_aggregation_pattern(self) -> None:
         """Test fan-out pattern with aggregation using mix_pool."""
         
         numbers = [10, 20, 30, 40, 50]
@@ -379,7 +380,7 @@ class TestComplexDataFlows:
                 "count": results[2]
             }
         )
-        def multi_analysis():
+        def multi_analysis() -> list[Callable]:
             return [
                 lambda x: x,              # Sum contribution
                 lambda x: x,              # Product contribution  
@@ -400,7 +401,7 @@ class TestComplexDataFlows:
         assert is_ok(result)
     
     @pytest.mark.asyncio
-    async def test_conditional_processing_pipeline(self):
+    async def test_conditional_processing_pipeline(self) -> None:
         """Test pipeline with conditional processing paths."""
         
         mixed_data = [
@@ -453,10 +454,10 @@ class TestComplexDataFlows:
         assert is_ok(result)
     
     @pytest.mark.asyncio
-    async def test_streaming_transformation_pipeline(self):
+    async def test_streaming_transformation_pipeline(self) -> None:
         """Test pipeline that simulates real-time data streaming."""
         
-        def data_stream():
+        def data_stream() -> Generator:
             """Simulate a data stream."""
             for i in range(20):
                 yield {
@@ -522,9 +523,9 @@ class TestEdgeCases:
     """Test edge cases and boundary conditions."""
     
     @pytest.mark.asyncio
-    async def test_empty_pipeline(self):
+    async def test_empty_pipeline(self) -> None:
         """Test pipeline with no data."""
-        empty_data = []
+        empty_data: list = []
         
         @work_pool()
         def process_item(x: int, state: WorkerState) -> int:
@@ -537,7 +538,7 @@ class TestEdgeCases:
         assert is_ok(result)
     
     @pytest.mark.asyncio
-    async def test_single_item_pipeline(self):
+    async def test_single_item_pipeline(self) -> None:
         """Test pipeline with single item."""
         single_item = [42]
         
@@ -558,7 +559,7 @@ class TestEdgeCases:
         assert is_ok(result)
     
     @pytest.mark.asyncio
-    async def test_very_large_pipeline(self):
+    async def test_very_large_pipeline(self) -> None:
         """Test pipeline with large dataset."""
         large_data = range(1000)
         

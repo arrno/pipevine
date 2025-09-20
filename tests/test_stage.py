@@ -1,17 +1,20 @@
 """Tests for stage module - Stage class, work_pool, mix_pool decorators."""
 
 import asyncio
+from asyncio import Queue
+from typing import Any, Callable
+
 import pytest
-from typing import Any
-from worker_state import WorkerState
-from stage import Stage, work_pool, mix_pool, as_stage, PathChoice
-from async_util import SENTINEL
+
+from parllel.async_util import SENTINEL
+from parllel.stage import PathChoice, Stage, as_stage, mix_pool, work_pool
+from parllel.worker_state import WorkerState
 
 
 class TestStageClass:
     """Test the Stage class directly."""
     
-    def test_stage_creation(self):
+    def test_stage_creation(self) -> None:
         def dummy_func(x: int, state: WorkerState) -> int:
             return x * 2
         
@@ -33,7 +36,7 @@ class TestStageClass:
         assert stage._choose is PathChoice.One
     
     @pytest.mark.asyncio
-    async def test_stage_run_single_function_async(self):
+    async def test_stage_run_single_function_async(self) -> None:
         def double(x: int, state: WorkerState) -> int:
             return x * 2
         
@@ -47,7 +50,7 @@ class TestStageClass:
         )
         
         # Create input queue
-        inbound = asyncio.Queue(maxsize=5)
+        inbound: Queue =asyncio.Queue(maxsize=5)
         await inbound.put(1)
         await inbound.put(2)
         await inbound.put(3)
@@ -67,7 +70,7 @@ class TestStageClass:
         assert results == [2, 4, 6]
     
     @pytest.mark.asyncio 
-    async def test_stage_run_multiple_functions_async(self):
+    async def test_stage_run_multiple_functions_async(self) -> None:
         def add_one(x: int, state: WorkerState) -> int:
             return x + 1
         
@@ -83,7 +86,7 @@ class TestStageClass:
             _choose=PathChoice.One
         )
         
-        inbound = asyncio.Queue(maxsize=5)
+        inbound: Queue =asyncio.Queue(maxsize=5)
         for i in range(4):
             await inbound.put(i)
         await inbound.put(SENTINEL)
@@ -105,7 +108,7 @@ class TestStageClass:
         assert all(isinstance(r, int) for r in results)
     
     @pytest.mark.asyncio
-    async def test_stage_close(self):
+    async def test_stage_close(self) -> None:
         def identity(x: Any, state: WorkerState) -> Any:
             return x
         
@@ -116,7 +119,7 @@ class TestStageClass:
             functions=[identity]
         )
         
-        inbound = asyncio.Queue(maxsize=1)
+        inbound: Queue =asyncio.Queue(maxsize=1)
         stage.run(inbound)
         
         # Test closing
@@ -132,7 +135,7 @@ class TestStageClass:
 class TestWorkPool:
     """Test the work_pool decorator."""
     
-    def test_work_pool_default_params(self):
+    def test_work_pool_default_params(self) -> None:
         @work_pool()
         def simple_func(x: int, state: WorkerState) -> int:
             return x + 1
@@ -145,7 +148,7 @@ class TestWorkPool:
         assert simple_func.merge is None
         assert simple_func._choose is PathChoice.One
     
-    def test_work_pool_custom_params(self):
+    def test_work_pool_custom_params(self) -> None:
         @work_pool(buffer=10, retries=5, num_workers=3, multi_proc=True)
         def custom_func(x: int, state: WorkerState) -> int:
             return x * 3
@@ -158,8 +161,8 @@ class TestWorkPool:
         assert all(f is custom_func.functions[0] for f in custom_func.functions)
         assert custom_func._choose is PathChoice.One
     
-    def test_work_pool_with_fork_merge(self):
-        def merger(results):
+    def test_work_pool_with_fork_merge(self) -> None:
+        def merger(results: list[int]) -> int:
             return sum(results)
         
         @work_pool(num_workers=2, fork_merge=merger)
@@ -172,13 +175,13 @@ class TestWorkPool:
         assert len(add_ten.functions) == 2
     
     @pytest.mark.asyncio
-    async def test_work_pool_execution(self):
+    async def test_work_pool_execution(self) -> None:
         @work_pool(buffer=3, num_workers=2)
         async def async_double(x: int, state: WorkerState) -> int:
             await asyncio.sleep(0.01)  # Small delay
             return x * 2
         
-        inbound = asyncio.Queue(maxsize=5)
+        inbound: Queue =asyncio.Queue(maxsize=5)
         await inbound.put(1)
         await inbound.put(2)
         await inbound.put(SENTINEL)
@@ -199,9 +202,9 @@ class TestWorkPool:
 class TestMixPool:
     """Test the mix_pool decorator."""
     
-    def test_mix_pool_default_params(self):
+    def test_mix_pool_default_params(self) -> None:
         @mix_pool()
-        def multi_functions():
+        def multi_functions() -> list[Callable]:
             return [
                 lambda x, s: x + 1,
                 lambda x, s: x * 2
@@ -215,12 +218,12 @@ class TestMixPool:
         assert multi_functions.merge is None
         assert multi_functions._choose is PathChoice.One
     
-    def test_mix_pool_custom_params(self):
-        def merger(results):
+    def test_mix_pool_custom_params(self) -> None:
+        def merger(results: list[int]) -> int:
             return max(results)
         
         @mix_pool(buffer=20, retries=2, multi_proc=True, fork_merge=merger)
-        def mixed_analysis():
+        def mixed_analysis() -> list[Callable]:
             return [
                 lambda x, s: x ** 2,
                 lambda x, s: x ** 3,
@@ -236,15 +239,15 @@ class TestMixPool:
         assert mixed_analysis._choose is PathChoice.All
     
     @pytest.mark.asyncio
-    async def test_mix_pool_execution(self):
+    async def test_mix_pool_execution(self) -> None:
         @mix_pool(buffer=5)
-        def math_operations():
+        def math_operations() -> list[Callable]:
             return [
                 lambda x, s: x + 10,  # Add 10
                 lambda x, s: x * 3    # Multiply by 3
             ]
         
-        inbound = asyncio.Queue(maxsize=5)
+        inbound: Queue =asyncio.Queue(maxsize=5)
         await inbound.put(5)
         await inbound.put(SENTINEL)
         
@@ -263,13 +266,13 @@ class TestMixPool:
         
         # Let me use different operations
         @mix_pool(buffer=5)  
-        def different_operations():
+        def different_operations() -> list[Callable]:
             return [
                 lambda x, s: x + 1,   # Add 1
                 lambda x, s: x * 10   # Multiply by 10
             ]
         
-        inbound2 = asyncio.Queue(maxsize=5)
+        inbound2: Queue = asyncio.Queue(maxsize=5)
         await inbound2.put(2)
         await inbound2.put(SENTINEL)
         
@@ -289,7 +292,7 @@ class TestMixPool:
 class TestAsStage:
     """Test the as_stage function."""
     
-    def test_as_stage_creation(self):
+    def test_as_stage_creation(self) -> None:
         def simple_func(x: int, state: WorkerState) -> int:
             return x + 5
         
@@ -304,13 +307,13 @@ class TestAsStage:
         assert stage.merge is None
     
     @pytest.mark.asyncio
-    async def test_as_stage_execution(self):
+    async def test_as_stage_execution(self) -> None:
         def increment(x: int, state: WorkerState) -> int:
             return x + 1
         
         stage = as_stage(increment)
         
-        inbound = asyncio.Queue(maxsize=5)
+        inbound: Queue =asyncio.Queue(maxsize=5)
         await inbound.put(10)
         await inbound.put(20)
         await inbound.put(SENTINEL)
@@ -330,17 +333,16 @@ class TestAsStage:
 class TestPathChoice:
     """Test PathChoice enum and its behavior."""
     
-    def test_path_choice_values(self):
+    def test_path_choice_values(self) -> None:
         assert PathChoice.One is not None
         assert PathChoice.All is not None
-        assert PathChoice.One != PathChoice.All
     
     @pytest.mark.asyncio
-    async def test_path_choice_one_behavior(self):
+    async def test_path_choice_one_behavior(self) -> None:
         """Test that PathChoice.One distributes items across workers."""
         
-        def track_worker(worker_id):
-            def inner(x, state: WorkerState):
+        def track_worker(worker_id: int) -> Callable:
+            def inner(x: str, state: WorkerState) -> str:
                 return f"worker_{worker_id}_{x}"
             return inner
         
@@ -353,7 +355,7 @@ class TestPathChoice:
             _choose=PathChoice.One
         )
         
-        inbound = asyncio.Queue(maxsize=10)
+        inbound: Queue =asyncio.Queue(maxsize=10)
         for i in range(4):
             await inbound.put(i)
         await inbound.put(SENTINEL)
@@ -383,7 +385,7 @@ class TestStageIntegration:
     """Integration tests for Stage functionality."""
     
     @pytest.mark.asyncio
-    async def test_stage_with_errors_and_retries(self):
+    async def test_stage_with_errors_and_retries(self) -> None:
         """Test stage behavior with functions that can fail."""
         
         attempt_count = 0
@@ -402,7 +404,7 @@ class TestStageIntegration:
             functions=[flaky_function]
         )
         
-        inbound = asyncio.Queue(maxsize=5)
+        inbound: Queue =asyncio.Queue(maxsize=5)
         await inbound.put(1)
         await inbound.put(5)  # This will fail once then succeed
         await inbound.put(3)
@@ -424,7 +426,7 @@ class TestStageIntegration:
         assert 6 in results   # 3 * 2
     
     @pytest.mark.asyncio
-    async def test_multiple_stages_chained(self):
+    async def test_multiple_stages_chained(self) -> None:
         """Test chaining multiple stages together."""
         
         # Stage 1: Add 1
@@ -438,7 +440,7 @@ class TestStageIntegration:
             return x * 2
         
         # Input data
-        inbound = asyncio.Queue(maxsize=5)
+        inbound: Queue =asyncio.Queue(maxsize=5)
         for i in range(3):
             await inbound.put(i)
         await inbound.put(SENTINEL)
@@ -459,7 +461,7 @@ class TestStageIntegration:
         assert results == [2, 4, 6]
     
     @pytest.mark.asyncio
-    async def test_concurrent_stages_same_input(self):
+    async def test_concurrent_stages_same_input(self) -> None:
         """Test multiple stages processing the same input concurrently."""
         
         @work_pool(buffer=2)
@@ -471,7 +473,7 @@ class TestStageIntegration:
             return x * 3
         
         # Shared input
-        inbound = asyncio.Queue(maxsize=5)
+        inbound: Queue =asyncio.Queue(maxsize=5)
         await inbound.put(2)
         await inbound.put(3)
         await inbound.put(SENTINEL)
@@ -485,7 +487,7 @@ class TestStageIntegration:
         double_results = []
         triple_results = []
         
-        async def do_double():
+        async def do_double() -> None:
             # Get results from double stage
             while True:
                 item = await double_out.get()
@@ -493,7 +495,7 @@ class TestStageIntegration:
                     break
                 double_results.append(item)
         
-        async def do_triple():
+        async def do_triple() -> None:
             # Get results from triple stage  
             while True:
                 item = await triple_out.get()

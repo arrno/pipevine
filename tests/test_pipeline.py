@@ -1,21 +1,22 @@
 """Tests for pipeline module - Pipeline class and composition."""
 
 import asyncio
-import pytest
-from typing import Any
+from typing import Any, Iterator, Generator, Callable
 from unittest.mock import patch
-from worker_state import WorkerState
 
-from pipeline import Pipeline
-from stage import Stage, work_pool, mix_pool
-from util import Err, is_err, is_ok, get_err
-from async_util import SENTINEL
+import pytest
+
+from parllel.async_util import SENTINEL
+from parllel.pipeline import Pipeline
+from parllel.stage import Stage, mix_pool, work_pool
+from parllel.util import Err, get_err, is_err, is_ok
+from parllel.worker_state import WorkerState
 
 
 class TestPipelineCreation:
     """Test Pipeline creation and basic setup."""
     
-    def test_pipeline_creation_with_generator(self):
+    def test_pipeline_creation_with_generator(self) -> None:
         data = [1, 2, 3, 4, 5]
         pipeline = Pipeline(iter(data), True)
         
@@ -24,14 +25,14 @@ class TestPipelineCreation:
         assert pipeline.log is True
         assert is_ok(pipeline.result)
     
-    def test_pipeline_creation_empty(self):
-        empty_gen = iter([])
+    def test_pipeline_creation_empty(self) -> None:
+        empty_gen: Iterator[Any] = iter([])
         pipeline = Pipeline(empty_gen)
         
         assert pipeline.generator is not None
         assert pipeline.stages == []
     
-    def test_pipeline_gen_method(self):
+    def test_pipeline_gen_method(self) -> None:
         pipeline = Pipeline(iter([]))
         new_data = [10, 20, 30]
         
@@ -44,7 +45,7 @@ class TestPipelineCreation:
 class TestPipelineStageManagement:
     """Test adding and managing stages in the pipeline."""
     
-    def test_stage_method(self):
+    def test_stage_method(self) -> None:
         @work_pool()
         def double(x: int, state: WorkerState) -> int:
             return x * 2
@@ -56,7 +57,7 @@ class TestPipelineStageManagement:
         assert len(pipeline.stages) == 1
         assert pipeline.stages[0] is double
     
-    def test_stage_method_with_empty_functions(self):
+    def test_stage_method_with_empty_functions(self) -> None:
         # Create a stage with empty functions list
         empty_stage = Stage(1, 1, False, [], None)
         
@@ -66,7 +67,7 @@ class TestPipelineStageManagement:
         assert result is pipeline
         assert len(pipeline.stages) == 0  # Should not add empty stage
     
-    def test_multiple_stages(self):
+    def test_multiple_stages(self) -> None:
         @work_pool()
         def add_one(x: int, state: WorkerState) -> int:
             return x + 1
@@ -83,7 +84,7 @@ class TestPipelineStageManagement:
         assert pipeline.stages[0] is add_one
         assert pipeline.stages[1] is multiply_two
     
-    def test_rshift_operator(self):
+    def test_rshift_operator(self) -> None:
         @work_pool()
         def increment(x: int, state: WorkerState) -> int:
             return x + 1
@@ -95,7 +96,7 @@ class TestPipelineStageManagement:
         assert len(pipeline.stages) == 1
         assert pipeline.stages[0] is increment
     
-    def test_chained_rshift_operators(self):
+    def test_chained_rshift_operators(self) -> None:
         @work_pool()
         def add_one(x: int, state: WorkerState) -> int:
             return x + 1
@@ -116,7 +117,7 @@ class TestPipelineExecution:
     """Test pipeline execution and data flow."""
     
     @pytest.mark.asyncio
-    async def test_simple_pipeline_execution(self):
+    async def test_simple_pipeline_execution(self) -> None:
         @work_pool()
         def double(x: int, state: WorkerState) -> int:
             return x * 2
@@ -132,7 +133,7 @@ class TestPipelineExecution:
         assert is_ok(result)
     
     @pytest.mark.asyncio
-    async def test_multi_stage_pipeline(self):
+    async def test_multi_stage_pipeline(self) -> None:
         @work_pool()
         def add_one(x: int, state: WorkerState) -> int:
             return x + 1
@@ -152,7 +153,7 @@ class TestPipelineExecution:
         # But we don't capture the final output in this test
 
     @pytest.mark.asyncio
-    async def test_multi_stage_pipeline_num_workers(self):
+    async def test_multi_stage_pipeline_num_workers(self) -> None:
         @work_pool(num_workers=2)
         def add_one(x: int, state: WorkerState) -> int:
             return x + 1
@@ -172,7 +173,7 @@ class TestPipelineExecution:
         # But we don't capture the final output in this test
 
     @pytest.mark.asyncio
-    async def test_multi_stage_mp_pipeline(self):
+    async def test_multi_stage_mp_pipeline(self) -> None:
         @work_pool(num_workers=2, multi_proc=True)
         def add_one(x: int, state: WorkerState) -> int:
             return x + 1
@@ -190,21 +191,21 @@ class TestPipelineExecution:
         assert is_ok(result)
 
     @pytest.mark.asyncio
-    async def test_pipeline_with_no_generator(self):
+    async def test_pipeline_with_no_generator(self) -> None:
         @work_pool()
         def identity(x: Any, state: WorkerState) -> Any:
             return x
         
         pipeline = Pipeline(iter([]))
         pipeline.generator = None  # Simulate no generator
-        pipeline >> identity
+        _ = pipeline >> identity
         
         result = await pipeline.run()
         
         assert is_err(result)
     
     @pytest.mark.asyncio 
-    async def test_pipeline_with_no_stages(self):
+    async def test_pipeline_with_no_stages(self) -> None:
         data = [1, 2, 3, 4, 5]
         pipeline = Pipeline(iter(data))
         pipeline.log = False
@@ -215,12 +216,12 @@ class TestPipelineExecution:
         assert is_ok(result)
     
     @pytest.mark.asyncio
-    async def test_pipeline_error_handling_in_generator(self):
-        def failing_generator():
+    async def test_pipeline_error_handling_in_generator(self) -> None:
+        def failing_generator() -> Generator:
             yield 1
             yield 2
             raise ValueError("Generator failed")
-            yield 3  # This won't be reached
+            # yield 3  # This won't be reached
         
         @work_pool()
         def identity(x: Any, state: WorkerState) -> Any:
@@ -238,9 +239,9 @@ class TestPipelineErrorHandling:
     """Test pipeline error handling and logging."""
     
     @pytest.mark.asyncio
-    async def test_pipeline_handles_generator_errors(self):
+    async def test_pipeline_handles_generator_errors(self) -> None:
         """Test that pipeline properly handles errors from generators."""
-        def error_generator():
+        def error_generator() -> Generator:
             yield 1
             yield 2
             raise ValueError("Generator error")
@@ -259,7 +260,7 @@ class TestPipelineErrorHandling:
         assert "Generator error" in get_err(result)
     
     @pytest.mark.asyncio
-    async def test_pipeline_logging_enabled(self):
+    async def test_pipeline_logging_enabled(self) -> None:
         """Test pipeline with logging enabled."""
         data = [1, 2, 3]
         
@@ -278,7 +279,7 @@ class TestPipelineErrorHandling:
         assert is_ok(result)
     
     @pytest.mark.asyncio
-    async def test_pipeline_logging_disabled(self):
+    async def test_pipeline_logging_disabled(self) -> None:
         """Test pipeline with logging disabled."""
         data = [1, 2, 3]
         
@@ -297,9 +298,9 @@ class TestPipelineErrorHandling:
         assert is_ok(result)
     
     @pytest.mark.asyncio
-    async def test_pipeline_with_stage_errors(self):
+    async def test_pipeline_with_stage_errors(self) -> None:
         """Test pipeline behavior when stages produce errors."""
-        def error_data():
+        def error_data() -> Generator:
             yield 1
             yield Err("embedded error")
             yield 3
@@ -322,7 +323,7 @@ class TestPipelineDataHandling:
     """Test pipeline data handling and edge cases."""
     
     @pytest.mark.asyncio
-    async def test_pipeline_with_normal_data_flow(self):
+    async def test_pipeline_with_normal_data_flow(self) -> None:
         """Test pipeline processes normal data correctly."""
         data = [1, 2, 3, 4, 5]
         
@@ -337,9 +338,9 @@ class TestPipelineDataHandling:
         assert is_ok(result)
     
     @pytest.mark.asyncio
-    async def test_pipeline_with_mixed_result_types(self):
+    async def test_pipeline_with_mixed_result_types(self) -> None:
         """Test pipeline behavior with mixed Result types in data."""
-        def mixed_data():
+        def mixed_data() -> Generator:
             yield 1
             yield Err("error in data")
             yield 3
@@ -358,13 +359,13 @@ class TestPipelineDataHandling:
         assert "error in data" in get_err(result)
     
     @pytest.mark.asyncio
-    async def test_pipeline_with_iterator_exception(self):
+    async def test_pipeline_with_iterator_exception(self) -> None:
         """Test pipeline behavior when input iterator raises exceptions."""
-        def failing_iterator():
+        def failing_iterator() -> Generator:
             yield 1
             yield 2
             raise RuntimeError("Iterator failure")
-            yield 3  # Never reached
+            # yield 3  # Never reached
         
         @work_pool()
         def identity(x: int, state: WorkerState) -> int:
@@ -383,7 +384,7 @@ class TestPipelineIntegration:
     """Integration tests combining multiple pipeline features."""
     
     @pytest.mark.asyncio
-    async def test_complex_pipeline_with_different_stage_types(self):
+    async def test_complex_pipeline_with_different_stage_types(self) -> None:
         """Test pipeline with various stage types and configurations."""
         
         @work_pool(buffer=5, num_workers=2)
@@ -391,7 +392,7 @@ class TestPipelineIntegration:
             return x + 1
         
         @mix_pool(buffer=3, fork_merge=lambda results: sum(results))
-        def analyze():
+        def analyze() -> list[Callable]:
             return [
                 lambda x, s: x * 2,  # Double
                 lambda x, s: x * 3   # Triple  
@@ -409,7 +410,7 @@ class TestPipelineIntegration:
         assert is_ok(result)
     
     @pytest.mark.asyncio
-    async def test_pipeline_with_async_stages(self):
+    async def test_pipeline_with_async_stages(self) -> None:
         """Test pipeline with async stage functions."""
         
         @work_pool(buffer=3)
@@ -430,7 +431,7 @@ class TestPipelineIntegration:
         assert is_ok(result)
     
     @pytest.mark.asyncio
-    async def test_pipeline_resilience_to_stage_errors(self):
+    async def test_pipeline_resilience_to_stage_errors(self) -> None:
         """Test pipeline behavior when stages have errors."""
         
         @work_pool(retries=3)
@@ -453,14 +454,14 @@ class TestPipelineIntegration:
         assert is_ok(result)
     
     @pytest.mark.asyncio
-    async def test_empty_data_pipeline(self):
+    async def test_empty_data_pipeline(self) -> None:
         """Test pipeline behavior with empty input data."""
         
         @work_pool()
         def process_item(x: int, state: WorkerState) -> int:
             return x * 2
         
-        empty_data = []
+        empty_data: list = []
         pipeline = Pipeline(iter(empty_data)) >> process_item
         pipeline.log = False
         
@@ -468,7 +469,7 @@ class TestPipelineIntegration:
         assert is_ok(result)
     
     @pytest.mark.asyncio
-    async def test_large_data_pipeline(self):
+    async def test_large_data_pipeline(self) -> None:
         """Test pipeline with larger dataset."""
         
         @work_pool(buffer=10, num_workers=3)
@@ -491,7 +492,7 @@ class TestPipelineChaining:
     """Test various ways to chain pipeline operations."""
     
     @pytest.mark.asyncio
-    async def test_method_chaining(self):
+    async def test_method_chaining(self) -> None:
         """Test building pipeline with method chaining."""
         
         @work_pool()
@@ -518,7 +519,7 @@ class TestPipelineChaining:
         assert len(pipeline.stages) == 3
     
     @pytest.mark.asyncio
-    async def test_operator_chaining(self):
+    async def test_operator_chaining(self) -> None:
         """Test building pipeline with >> operators."""
         
         @work_pool()
@@ -538,7 +539,7 @@ class TestPipelineChaining:
         assert len(pipeline.stages) == 2
     
     # @pytest.mark.asyncio
-    # async def test_mixed_chaining_styles(self):
+    # async def test_mixed_chaining_styles(self) -> None:
     #     """Test mixing method chaining and operator chaining."""
         
     #     @work_pool()

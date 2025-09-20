@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pypline"
+name = "parllel"
 version = "0.1.0"
 description = "A high-performance async pipeline processing library for Python"
 readme = "README.md"
@@ -52,12 +52,15 @@ dev = [
     "ruff>=0.1.0",
 ]
 
+[tool.setuptools]
+package-dir = {"" = "parllel/src"}
+
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["pypline*"]
+where = ["parllel/src"]
+include = ["parllel*"]
 
 [tool.setuptools.package-data]
-pypline = ["py.typed"]
+parllel = ["py.typed"]
 
 [tool.black]
 line-length = 88
@@ -102,4 +105,4 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-pythonpath = ["."]
+pythonpath = ["parllel/src"]

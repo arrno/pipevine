@@ -1,22 +1,25 @@
 """Tests for WorkerState persistence across handler calls."""
 
 import asyncio
-import pytest
+from asyncio import Queue
 import multiprocessing as mp
+from multiprocessing.queues import Queue as MPQueue
 from typing import Any
 
-from worker import worker, worker_no_buf, mp_worker
-from async_util import SENTINEL
-from worker_state import WorkerState, WorkerHandler
-from stage import work_pool
+import pytest
+
+from parllel.async_util import SENTINEL
+from parllel.stage import work_pool
+from parllel.worker import mp_worker, worker, worker_no_buf
+from parllel.worker_state import WorkerHandler, WorkerState
 
 class TestWorkerStatePersistence:
     """Test WorkerState persistence across multiple handler calls."""
     
     @pytest.mark.asyncio
-    async def test_state_persists_across_calls(self):
+    async def test_state_persists_across_calls(self) -> None:
         """Test that state persists across multiple handler calls in the same worker."""
-        inbound = asyncio.Queue(maxsize=10)
+        inbound: Queue = asyncio.Queue(maxsize=10)
         call_count = 0
         
         def counter_handler(x: int, state: WorkerState) -> int:
@@ -31,7 +34,7 @@ class TestWorkerStatePersistence:
             current = state.get('counter')
             state.update(counter=current + 1)
             
-            return state.get('counter')
+            return int(state.get('counter'))
         
         # Add test data
         for i in range(5):
@@ -53,18 +56,18 @@ class TestWorkerStatePersistence:
         assert call_count == 5
 
     @pytest.mark.asyncio 
-    async def test_connection_reuse_pattern(self):
+    async def test_connection_reuse_pattern(self) -> None:
         """Test pattern of reusing connections/clients across calls."""
-        inbound = asyncio.Queue(maxsize=10)
+        inbound: Queue = asyncio.Queue(maxsize=10)
         connection_created_count = 0
         
         class MockConnection:
-            def __init__(self):
+            def __init__(self) -> None:
                 nonlocal connection_created_count
                 connection_created_count += 1
                 self.used_count = 0
                 
-            def process(self, data):
+            def process(self, data: str) -> str:
                 self.used_count += 1
                 return f"processed_{data}_count_{self.used_count}"
         
@@ -74,7 +77,7 @@ class TestWorkerStatePersistence:
                 state.update(connection=MockConnection())
             
             conn = state.get('connection')
-            return conn.process(data)
+            return str(conn.process(data))
         
         # Add test data
         test_data = ["item1", "item2", "item3"]
@@ -87,10 +90,10 @@ class TestWorkerStatePersistence:
         # Collect results
         results = []
         while True:
-            item = await outbound.get()
-            if item is SENTINEL:
+            got = await outbound.get()
+            if got is SENTINEL:
                 break
-            results.append(item)
+            results.append(got)
         
         # Should only create one connection, but use it multiple times
         assert connection_created_count == 1
@@ -101,9 +104,9 @@ class TestWorkerStatePersistence:
         ]
 
     @pytest.mark.asyncio
-    async def test_multiple_workers_separate_state(self):
+    async def test_multiple_workers_separate_state(self) -> None:
         """Test that different workers maintain separate state."""
-        inbound = asyncio.Queue(maxsize=20)
+        inbound: Queue = asyncio.Queue(maxsize=20)
         
         @work_pool(buffer=3, retries=1, num_workers=3)
         def worker_id_handler(data: int, state: WorkerState) -> tuple[int, int]:
@@ -137,7 +140,7 @@ class TestWorkerStatePersistence:
         assert len(results) == 10
         
         # Group by worker_id to see state separation
-        worker_groups = {}
+        worker_groups: dict = {}
         for worker_id, data in results:
             if worker_id not in worker_groups:
                 worker_groups[worker_id] = []
@@ -150,7 +153,7 @@ class TestWorkerStatePersistence:
 class TestWorkerStateOperations:
     """Test WorkerState get/update operations."""
     
-    def test_get_with_default(self):
+    def test_get_with_default(self) -> None:
         """Test WorkerState.get() with default values."""
         state = WorkerState({})
         
@@ -162,7 +165,7 @@ class TestWorkerStateOperations:
         state.values['existing_key'] = 'existing_value'
         assert state.get('existing_key', 'default_value') == 'existing_value'
     
-    def test_update_values(self):
+    def test_update_values(self) -> None:
         """Test WorkerState.update() method."""
         state = WorkerState({})
         
@@ -178,7 +181,7 @@ class TestWorkerStateOperations:
             'key3': 'value3'
         }
 
-    def test_complex_state_objects(self):
+    def test_complex_state_objects(self) -> None:
         """Test storing complex objects in state."""
         state = WorkerState({})
         
@@ -203,14 +206,14 @@ def process_with_state(data: int, state: WorkerState) -> tuple[int, int]:
 
 # Simple connection-like class that can be pickled
 class SimpleConnection:
-    def __init__(self):
+    def __init__(self) -> None:
         self.created_at = mp.current_process().pid
         self.call_count = 0
         self.non_picklable = lambda x: x
     
-    def process_data(self, data):
+    def process_data(self, data: str) -> str:
         self.call_count += 1
-        return f"pid_{self.created_at}_call_{self.call_count}_data_{data}"
+        return (f"pid_{self.created_at}_call_{self.call_count}_data_{data}")
 
 def handler_with_connection(data: str, state: WorkerState) -> str:
     # Create connection if not exists (should happen once per process)
@@ -218,7 +221,7 @@ def handler_with_connection(data: str, state: WorkerState) -> str:
         state.update(connection=SimpleConnection())
     
     conn = state.get('connection')
-    return conn.process_data(data)
+    return str(conn.process_data(data))
 
 def state_modifier(data: int, state: WorkerState) -> int:
     # Modify shared state
@@ -226,7 +229,7 @@ def state_modifier(data: int, state: WorkerState) -> int:
         state.update(shared_value=0)
     
     current = state.get('shared_value')
-    new_value = current + data
+    new_value = int(current + data)
     state.update(shared_value=new_value)
     
     return new_value
@@ -234,12 +237,12 @@ def state_modifier(data: int, state: WorkerState) -> int:
 class TestMultiProcessBoundaryScenarios:
     """Test WorkerState behavior across multi-process boundaries."""
     
-    def test_state_isolation_multiprocess(self):
+    def test_state_isolation_multiprocess(self) -> None:
         """Test that each multiprocess worker maintains isolated state."""
         if mp.get_start_method() != 'spawn':
             pytest.skip("Multiprocessing tests require spawn start method")
             
-        inbound = mp.Queue()
+        inbound: MPQueue = mp.Queue()
         
         # Add test data
         for i in range(5):
@@ -270,12 +273,12 @@ class TestMultiProcessBoundaryScenarios:
         assert data_values == [0, 1, 2, 3, 4]
         assert counter_values == [1, 2, 3, 4, 5]  # Sequential counter
     
-    def test_connection_pattern_multiprocess(self):
+    def test_connection_pattern_multiprocess(self) -> None:
         """Test connection-like object creation in multiprocess worker."""
         if mp.get_start_method() != 'spawn':
             pytest.skip("Multiprocessing tests require spawn start method")
             
-        inbound = mp.Queue()
+        inbound: MPQueue = mp.Queue()
         
         # Add test data
         test_items = ['item1', 'item2', 'item3']
@@ -290,10 +293,10 @@ class TestMultiProcessBoundaryScenarios:
         results = []
         while True:
             try:
-                item = outbound.get(timeout=5)
-                if item is SENTINEL:
+                got = outbound.get(timeout=5)
+                if got is SENTINEL:
                     break
-                results.append(item)
+                results.append(got)
             except:
                 break
         
@@ -320,7 +323,7 @@ class TestMultiProcessBoundaryScenarios:
         
         assert call_counts == [1, 2, 3]
 
-    def test_state_cannot_cross_process_boundary(self):
+    def test_state_cannot_cross_process_boundary(self) -> None:
         """Test that state modifications in one process don't affect another."""
         if mp.get_start_method() != 'spawn':
             pytest.skip("Multiprocessing tests require spawn start method")
@@ -329,8 +332,8 @@ class TestMultiProcessBoundaryScenarios:
         # by showing that two separate mp_worker instances don't share state
         
         # Create two separate multiprocess workers
-        inbound1 = mp.Queue()
-        inbound2 = mp.Queue()
+        inbound1: MPQueue[Any] = mp.Queue()
+        inbound2: MPQueue[Any] = mp.Queue()
         
         # Add data to both
         inbound1.put(10)

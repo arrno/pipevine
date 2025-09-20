@@ -1,13 +1,13 @@
 import asyncio
-from typing import Any
+from typing import Any, Callable
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pipeline import Pipeline
-from stage import work_pool, mix_pool
-from worker_state import WorkerState
-from util import is_ok
+from parllel.pipeline import Pipeline
+from parllel.stage import mix_pool, work_pool
+from parllel.util import is_ok
+from parllel.worker_state import WorkerState
 
 
 # Multiprocessing-compatible handlers must be defined at module scope on macOS.
@@ -27,7 +27,7 @@ async def _run_and_collect(pipeline: Pipeline) -> tuple[bool, list[Any]]:
 
 
 @pytest.mark.asyncio
-async def test_pipeline_results_with_buffers_and_chained_stages():
+async def test_pipeline_results_with_buffers_and_chained_stages() -> None:
     @work_pool(buffer=2)
     def add_one(x: int, state: WorkerState) -> int:
         return x + 1
@@ -46,7 +46,7 @@ async def test_pipeline_results_with_buffers_and_chained_stages():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_results_with_retries_and_multiple_workers():
+async def test_pipeline_results_with_retries_and_multiple_workers() -> None:
     @work_pool(num_workers=2, retries=2)
     def flaky_times_ten(x: int, state: WorkerState) -> int:
         attempts = state.get("attempts", {})
@@ -71,7 +71,7 @@ async def test_pipeline_results_with_retries_and_multiple_workers():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_results_with_multiprocessing_stage():
+async def test_pipeline_results_with_multiprocessing_stage() -> None:
     mp_stage = work_pool(buffer=3, num_workers=2, multi_proc=True)(_mp_square)
 
     @work_pool()
@@ -88,13 +88,13 @@ async def test_pipeline_results_with_multiprocessing_stage():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_results_with_mix_pool_and_fork_merge():
+async def test_pipeline_results_with_mix_pool_and_fork_merge() -> None:
     @work_pool()
     def preprocess(x: int, state: WorkerState) -> int:
         return x + 1
 
     @mix_pool(buffer=2, fork_merge=sum)
-    def fan_out():
+    def fan_out() -> list[Callable]:
         return [
             lambda x, state: x * 2,
             lambda x, state: x * 3,
@@ -114,7 +114,7 @@ async def test_pipeline_results_with_mix_pool_and_fork_merge():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_results_with_async_stages():
+async def test_pipeline_results_with_async_stages() -> None:
     @work_pool(buffer=2)
     async def async_increment(x: int, state: WorkerState) -> int:
         await asyncio.sleep(0.001)
