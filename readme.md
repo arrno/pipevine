@@ -225,6 +225,34 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+### Nesting
+
+A pipeline can be a generator for another pipeline
+
+```python
+result = await (
+    Pipeline(data) >>
+    stage1 >>
+    stage2 >>
+    (
+        # generator is replaced by parent
+        Pipeline(iter([])) >>
+        stage3
+    )
+).run()
+```
+
+```python
+result = await (
+    Pipeline(
+        Pipeline(data) >>
+        stage1 >>
+        stage2
+    ) >>
+    stage3
+).run()
+```
+
 ## Error Handling
 
 Parllel uses Result types for robust error handling:

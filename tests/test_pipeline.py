@@ -599,3 +599,16 @@ class TestPipelineChaining:
 
         assert is_ok(result)
         assert results == expected
+
+        results = []
+        result = await (
+            Pipeline(
+                Pipeline(iter(data)) >> 
+                stage1 >> 
+                stage2
+            ) >> 
+            stage3
+        ).run()
+
+        assert is_ok(result)
+        assert results == expected
