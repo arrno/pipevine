@@ -1,0 +1,2 @@
+- add pipeline.stage.worker cancel/timeout -> hold onto coroutine/proc ref -> cancel/terminate
+- if worker explodes, pipeline should cancel/teardown
