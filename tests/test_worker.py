@@ -2,14 +2,11 @@
 
 import asyncio
 import pytest
-import time
-from multiprocessing import Queue as MPQueue
 from typing import Any
 
 from worker import worker, worker_no_buf, mp_worker
 from async_util import SENTINEL
-from util import Result, Err, with_retry
-
+from worker_state import WorkerState
 
 class TestWorkerNoBuf:
     """Test the worker_no_buf function."""
@@ -19,7 +16,7 @@ class TestWorkerNoBuf:
         inbound = asyncio.Queue(maxsize=5)
         
         # Simple doubling function
-        def double(x: int) -> int:
+        def double(x: int, state: WorkerState) -> int:
             return x * 2
         
         # Add test data
@@ -45,7 +42,7 @@ class TestWorkerNoBuf:
         inbound = asyncio.Queue(maxsize=5)
         call_count = 0
         
-        def flaky_function(x: int) -> int:
+        def flaky_function(x: int, state: WorkerState) -> int:
             nonlocal call_count
             call_count += 1
             if call_count == 1:  # First call fails
@@ -68,7 +65,7 @@ class TestWorkerNoBuf:
     async def test_async_function(self):
         inbound = asyncio.Queue(maxsize=5)
         
-        async def async_double(x: int) -> int:
+        async def async_double(x: int, state: WorkerState) -> int:
             await asyncio.sleep(0.01)  # Small delay
             return x * 2
         
@@ -91,7 +88,7 @@ class TestWorker:
     async def test_basic_processing_with_buffer(self):
         inbound = asyncio.Queue(maxsize=6)
         
-        def increment(x: int) -> int:
+        def increment(x: int, state: WorkerState) -> int:
             return x + 1
         
         # Add test data
@@ -115,7 +112,7 @@ class TestWorker:
     async def test_zero_buffer_delegates_to_worker_no_buf(self):
         inbound = asyncio.Queue(maxsize=5)
         
-        def identity(x: Any) -> Any:
+        def identity(x: Any, state: WorkerState) -> Any:
             return x
         
         await inbound.put("test")
@@ -133,7 +130,7 @@ class TestWorker:
     async def test_negative_buffer_delegates_to_worker_no_buf(self):
         inbound = asyncio.Queue(maxsize=5)
         
-        def identity(x: Any) -> Any:
+        def identity(x: Any, state: WorkerState) -> Any:
             return x
         
         await inbound.put("test")
@@ -152,7 +149,7 @@ class TestWorker:
         inbound = asyncio.Queue(maxsize=5)
         
         failed = False
-        def sometimes_fails(x: int) -> int:
+        def sometimes_fails(x: int, state: WorkerState) -> int:
             nonlocal failed
             if x == 2 and not failed:
                 failed = True
@@ -179,17 +176,17 @@ class TestWorker:
         assert 10 in results  # 1 * 10
         assert 30 in results  # 3 * 10
 
-def square(x: int) -> int:
+def square(x: int, state: WorkerState) -> int:
     return x * x
 
-def flaky_square(x: int) -> int:
+def flaky_square(x: int, state: WorkerState) -> int:
     # This is a bit tricky to test with MP since each process 
     # has its own state. We'll use a simple condition.
     if x == 5:
         raise ValueError("Cannot process 5")
     return x * x
 
-def simple_func(x: int) -> int:
+def simple_func(x: int, state: WorkerState) -> int:
     return x
 
 class TestMPWorker:
@@ -283,11 +280,11 @@ class TestWorkerIntegration:
         # First stage
         stage1_in = asyncio.Queue(maxsize=10)
         
-        def add_one(x: int) -> int:
+        def add_one(x: int, state: WorkerState) -> int:
             return x + 1
         
         # Second stage  
-        def multiply_by_two(x: int) -> int:
+        def multiply_by_two(x: int, state: WorkerState) -> int:
             return x * 2
         
         # Add data to first stage
@@ -318,7 +315,7 @@ class TestWorkerIntegration:
         
         shared_input = asyncio.Queue(maxsize=10)
         
-        def process_with_id(x: int) -> tuple:
+        def process_with_id(x: int, state: WorkerState) -> tuple:
             # Add worker "id" to track which worker processed what
             return (x, "worker_processed")
         
@@ -362,7 +359,7 @@ class TestWorkerIntegration:
         assert processed_numbers == {0, 1, 2, 3, 4, 5}
 
 
-def identity(x: Any) -> Any:
+def identity(x: Any, state: WorkerState) -> Any:
     return x
 
 class TestSentinelHandling:
@@ -372,7 +369,7 @@ class TestSentinelHandling:
     async def test_sentinel_propagation_async(self):
         inbound = asyncio.Queue(maxsize=5)
         
-        def identity(x: Any) -> Any:
+        def identity(x: Any, state: WorkerState) -> Any:
             return x
         
         await inbound.put("data")

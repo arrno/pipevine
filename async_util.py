@@ -65,7 +65,12 @@ def async_to_mp_queue(aq: asyncio.Queue, *, ctx_method: str = "spawn") -> multip
     asyncio.create_task(_pump())
     return mpq
 
-async def async_to_mp_queue_with_ready(aq: asyncio.Queue, *, ctx_method: str = "spawn") -> multiprocessing.Queue:
+async def async_to_mp_queue_with_ready(
+    aq: asyncio.Queue,
+    *,
+    ctx_method: str = "spawn",
+    sentinel_count: Optional[int] = 1,
+) -> multiprocessing.Queue:
     """
     Returns a new MPQueue and starts an async task that forwards from aq -> mpq.
     Ensures the pump task has started before returning.
@@ -76,12 +81,15 @@ async def async_to_mp_queue_with_ready(aq: asyncio.Queue, *, ctx_method: str = "
 
     async def _pump() -> None:
         ready.set()  # Signal that pump has started
+        sentinels_seen = 0
         try:
             while True:
                 item = await aq.get()
                 mpq.put(item)
-                if item == SENTINEL:
-                    break
+                if item is SENTINEL:
+                    sentinels_seen += 1
+                    if sentinel_count is not None and sentinels_seen >= sentinel_count:
+                        break
         except Exception:
             mpq.put(SENTINEL)
 
@@ -112,9 +120,19 @@ async def _multiplex_async_queues_task(queues: list[asyncio.Queue]) -> asyncio.Q
 
     async def supervisor() -> None:
         # Run one forwarder per queue
-        async with asyncio.TaskGroup() as tg:
-            for q in queues:
-                tg.create_task(forward(q))
+        if hasattr(asyncio, "TaskGroup"):
+            async with asyncio.TaskGroup() as tg:
+                for q in queues:
+                    tg.create_task(forward(q))
+        else:
+            tasks = [asyncio.create_task(forward(q)) for q in queues]
+            try:
+                await asyncio.gather(*tasks)
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
         # All forwarders done => close downstream
         await outbound.put(SENTINEL)
 

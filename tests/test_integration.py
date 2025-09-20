@@ -4,13 +4,12 @@ import asyncio
 import pytest
 import time
 from typing import List, Dict, Any
-from concurrent.futures import ThreadPoolExecutor
 import json
 
 from pipeline import Pipeline
 from stage import work_pool, mix_pool, as_stage
-from util import Result, Err, is_err, is_ok
-
+from util import is_ok
+from worker_state import WorkerState
 
 class TestBasicPipelineWorkflows:
     """Test common pipeline usage patterns."""
@@ -29,21 +28,21 @@ class TestBasicPipelineWorkflows:
         ]
         
         @work_pool(buffer=3)
-        def validate_data(item: Dict[str, Any]) -> Dict[str, Any]:
+        def validate_data(item: Dict[str, Any], state: WorkerState) -> Dict[str, Any]:
             """Validate and clean data."""
             if item["value"] < 0:
                 raise ValueError(f"Invalid value: {item['value']}")
             return {**item, "validated": True}
         
         @work_pool(buffer=2, num_workers=2)
-        def enrich_data(item: Dict[str, Any]) -> Dict[str, Any]:
+        def enrich_data(item: Dict[str, Any], state: WorkerState) -> Dict[str, Any]:
             """Add computed fields."""
             item["double_value"] = item["value"] * 2
             item["is_high"] = item["value"] > 20
             return item
         
         @work_pool(buffer=5)
-        def format_output(item: Dict[str, Any]) -> str:
+        def format_output(item: Dict[str, Any], state: WorkerState) -> str:
             """Format as string output."""
             return f"ID:{item['id']}, Category:{item['category']}, Value:{item['double_value']}"
         
@@ -64,19 +63,19 @@ class TestBasicPipelineWorkflows:
         numbers = list(range(1, 101))  # 1 to 100
         
         @work_pool(buffer=10, num_workers=4)
-        def compute_square(n: int) -> int:
+        def compute_square(n: int, state: WorkerState) -> int:
             """Compute square of number."""
             return n * n
         
         @work_pool(buffer=5)
-        def filter_large(n: int) -> int:
+        def filter_large(n: int, state: WorkerState) -> int:
             """Filter out very large numbers."""
             if n > 5000:
                 raise ValueError("Number too large")
             return n
         
         @work_pool(buffer=3)
-        def add_constant(n: int) -> int:
+        def add_constant(n: int, state: WorkerState) -> int:
             """Add a constant."""
             return n + 1000
         
@@ -102,17 +101,17 @@ class TestBasicPipelineWorkflows:
         ]
         
         @work_pool(buffer=5)
-        def normalize_text(text: str) -> str:
+        def normalize_text(text: str, state: WorkerState) -> str:
             """Convert to lowercase and strip."""
             return text.lower().strip()
         
         @work_pool(buffer=3, num_workers=2)
-        def tokenize(text: str) -> List[str]:
+        def tokenize(text: str, state: WorkerState) -> List[str]:
             """Split into words."""
             return text.split()
         
         @work_pool(buffer=2)
-        def count_chars(words: List[str]) -> Dict[str, int]:
+        def count_chars(words: List[str], state: WorkerState) -> Dict[str, int]:
             """Count characters in all words."""
             total_chars = sum(len(word) for word in words)
             return {"word_count": len(words), "char_count": total_chars}
@@ -142,7 +141,7 @@ class TestAsyncPipelineWorkflows:
         ]
         
         @work_pool(buffer=2, num_workers=3)
-        async def fetch_data(url: str) -> Dict[str, Any]:
+        async def fetch_data(url: str, state: WorkerState) -> Dict[str, Any]:
             """Simulate async HTTP request."""
             await asyncio.sleep(0.01)  # Simulate network delay
             return {
@@ -153,7 +152,7 @@ class TestAsyncPipelineWorkflows:
             }
         
         @work_pool(buffer=3)
-        async def process_response(response: Dict[str, Any]) -> Dict[str, Any]:
+        async def process_response(response: Dict[str, Any], state: WorkerState) -> Dict[str, Any]:
             """Process the response."""
             await asyncio.sleep(0.005)  # Simulate processing time
             return {
@@ -163,7 +162,7 @@ class TestAsyncPipelineWorkflows:
             }
         
         @work_pool(buffer=5)
-        async def store_result(item: Dict[str, Any]) -> str:
+        async def store_result(item: Dict[str, Any], state: WorkerState) -> str:
             """Simulate storing result."""
             await asyncio.sleep(0.002)
             return f"Stored: {item['url']}"
@@ -188,18 +187,18 @@ class TestAsyncPipelineWorkflows:
         
         data = range(10)
         
-        def sync_multiply(x: int) -> int:
+        def sync_multiply(x: int, state: WorkerState) -> int:
             """Synchronous multiplication."""
             return x * 3
         
         @work_pool(buffer=5, num_workers=2)
-        async def async_add(x: int) -> int:
+        async def async_add(x: int, state: WorkerState) -> int:
             """Async addition with delay."""
             await asyncio.sleep(0.001)
             return x + 10
         
         @work_pool(buffer=3)
-        def sync_format(x: int) -> str:
+        def sync_format(x: int, state: WorkerState) -> str:
             """Sync formatting."""
             return f"Result: {x}"
         
@@ -224,7 +223,7 @@ class TestErrorHandlingWorkflows:
         data = [1, 2, 0, 4, -1, 6, 7, 8]  # Includes problematic values
         
         @work_pool(buffer=5, retries=2)
-        def divide_by_self_minus_one(x: int) -> float:
+        def divide_by_self_minus_one(x: int, state: WorkerState) -> float:
             """Function that fails for certain inputs."""
             if x <= 0:
                 raise ValueError(f"Invalid input: {x}")
@@ -233,14 +232,14 @@ class TestErrorHandlingWorkflows:
             return x / (x - 1)
         
         @work_pool(buffer=3, retries=3)
-        def safe_sqrt(x: float) -> float:
+        def safe_sqrt(x: float, state: WorkerState) -> float:
             """Safe square root with retries."""
             if x < 0:
                 raise ValueError("Cannot take sqrt of negative number")
             return x ** 0.5
         
         @work_pool(buffer=2)
-        def format_result(x: float) -> str:
+        def format_result(x: float, state: WorkerState) -> str:
             """Format the final result."""
             return f"Final: {x:.2f}"
         
@@ -263,14 +262,14 @@ class TestErrorHandlingWorkflows:
         data = range(100)  # Large dataset
         
         @work_pool(buffer=10)
-        def check_and_process(x: int) -> int:
+        def check_and_process(x: int, state: WorkerState) -> int:
             """Process but fail critically at specific point."""
             if x == 50:  # Critical failure point
                 raise RuntimeError("Critical system error")
             return x * 2
         
         @work_pool(buffer=5)
-        def further_processing(x: int) -> int:
+        def further_processing(x: int, state: WorkerState) -> int:
             """Further processing."""
             return x + 100
         
@@ -295,20 +294,20 @@ class TestConcurrencyAndPerformance:
         data = range(50)
         
         @work_pool(buffer=20, num_workers=8)
-        async def cpu_intensive_task(x: int) -> int:
+        async def cpu_intensive_task(x: int, state: WorkerState) -> int:
             """Simulate CPU-intensive task."""
             await asyncio.sleep(0.001)  # Small delay
             result = sum(range(x + 1))  # Some computation
             return result
         
         @work_pool(buffer=15, num_workers=6)
-        async def io_intensive_task(x: int) -> int:
+        async def io_intensive_task(x: int, state: WorkerState) -> int:
             """Simulate I/O-intensive task."""
             await asyncio.sleep(0.002)  # I/O delay
             return x * 2
         
         @work_pool(buffer=10, num_workers=4)
-        def finalize(x: int) -> str:
+        def finalize(x: int, state: WorkerState) -> str:
             """Finalize processing."""
             return f"Processed: {x}"
         
@@ -336,19 +335,19 @@ class TestConcurrencyAndPerformance:
         data = range(100)
         
         @work_pool(buffer=1, num_workers=1)  # Small buffer, single worker
-        async def slow_processor(x: int) -> int:
+        async def slow_processor(x: int, state: WorkerState) -> int:
             """Slow processing stage."""
             await asyncio.sleep(0.001)
             return x * 2
         
         @work_pool(buffer=50, num_workers=5)  # Large buffer, many workers
-        async def fast_processor(x: int) -> int:
+        async def fast_processor(x: int, state: WorkerState) -> int:
             """Fast processing stage."""
             await asyncio.sleep(0.0001)
             return x + 1
         
         @work_pool(buffer=10)  # Medium buffer
-        def output_stage(x: int) -> str:
+        def output_stage(x: int, state: WorkerState) -> str:
             """Output formatting."""
             return f"Item: {x}"
         
@@ -388,7 +387,7 @@ class TestComplexDataFlows:
             ]
         
         @work_pool(buffer=5)
-        def format_analysis(analysis: Dict[str, int]) -> str:
+        def format_analysis(analysis: Dict[str, int], state: WorkerState) -> str:
             """Format the analysis results."""
             return f"Sum: {analysis['sum']}, Product: {analysis['product']}, Count: {analysis['count']}"
         
@@ -413,7 +412,7 @@ class TestComplexDataFlows:
         ]
         
         @work_pool(buffer=5)
-        def route_and_process(item: Dict[str, Any]) -> Dict[str, Any]:
+        def route_and_process(item: Dict[str, Any], state: WorkerState) -> Dict[str, Any]:
             """Process based on item type."""
             if item["type"] == "number":
                 return {
@@ -431,7 +430,7 @@ class TestComplexDataFlows:
                 raise ValueError(f"Unknown type: {item['type']}")
         
         @work_pool(buffer=3)
-        def add_metadata(item: Dict[str, Any]) -> Dict[str, Any]:
+        def add_metadata(item: Dict[str, Any], state: WorkerState) -> Dict[str, Any]:
             """Add processing metadata."""
             return {
                 **item,
@@ -440,7 +439,7 @@ class TestComplexDataFlows:
             }
         
         @work_pool(buffer=2)
-        def serialize_output(item: Dict[str, Any]) -> str:
+        def serialize_output(item: Dict[str, Any], state: WorkerState) -> str:
             """Serialize to JSON string."""
             return json.dumps(item, default=str)
         
@@ -468,7 +467,7 @@ class TestComplexDataFlows:
                 }
         
         @work_pool(buffer=8, num_workers=3)
-        async def validate_sensor_data(data: Dict[str, Any]) -> Dict[str, Any]:
+        async def validate_sensor_data(data: Dict[str, Any], state: WorkerState) -> Dict[str, Any]:
             """Validate sensor data."""
             await asyncio.sleep(0.001)  # Simulate validation time
             
@@ -482,7 +481,7 @@ class TestComplexDataFlows:
             }
         
         @work_pool(buffer=5, num_workers=2) 
-        async def enrich_with_metadata(data: Dict[str, Any]) -> Dict[str, Any]:
+        async def enrich_with_metadata(data: Dict[str, Any], state: WorkerState) -> Dict[str, Any]:
             """Add metadata based on sensor."""
             await asyncio.sleep(0.001)
             
@@ -497,7 +496,7 @@ class TestComplexDataFlows:
             return {**data, **metadata}
         
         @work_pool(buffer=10)
-        async def store_processed_data(data: Dict[str, Any]) -> str:
+        async def store_processed_data(data: Dict[str, Any], state: WorkerState) -> str:
             """Simulate storing processed data."""
             await asyncio.sleep(0.001)
             return f"Stored: {data['sensor_id']} at {data['location']}"
@@ -528,7 +527,7 @@ class TestEdgeCases:
         empty_data = []
         
         @work_pool()
-        def process_item(x: int) -> int:
+        def process_item(x: int, state: WorkerState) -> int:
             return x * 2
         
         pipeline = Pipeline(iter(empty_data)) >> process_item
@@ -543,11 +542,11 @@ class TestEdgeCases:
         single_item = [42]
         
         @work_pool(buffer=1)
-        def double_value(x: int) -> int:
+        def double_value(x: int, state: WorkerState) -> int:
             return x * 2
         
         @work_pool(buffer=1)
-        def add_hundred(x: int) -> int:
+        def add_hundred(x: int, state: WorkerState) -> int:
             return x + 100
         
         pipeline = (Pipeline(iter(single_item))
@@ -564,11 +563,11 @@ class TestEdgeCases:
         large_data = range(1000)
         
         @work_pool(buffer=50, num_workers=10)
-        def fast_processing(x: int) -> int:
+        def fast_processing(x: int, state: WorkerState) -> int:
             return (x * 2) + 1
         
         @work_pool(buffer=25, num_workers=5)
-        def final_transform(x: int) -> str:
+        def final_transform(x: int, state: WorkerState) -> str:
             return f"Item_{x}"
         
         pipeline = (Pipeline(iter(large_data))

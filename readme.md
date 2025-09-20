@@ -1,15 +1,21 @@
 # Pypline
 
-A high-performance async pipeline processing library for Python that enables efficient, concurrent data processing with backpressure control and automatic error handling.
+[![Tests](https://github.com/arrno/pypline/actions/workflows/tests.yml/badge.svg)](https://github.com/arrno/pypline/actions/workflows/tests.yml)
+[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+**Pypline** is a lightweight, high-performance async pipeline library for Python. It helps you build fast, **concurrent dataflows** that are easy to compose, resilient to failure, and tuned for real-world workloads.
+
+Think of it as a lighter alternative to frameworks like Celery, giving you **backpressure, retries, and flexible worker orchestration** without the infa commitment.
 
 ## Features
 
--   **Async-first design** with optional multiprocessing support
--   **Backpressure control** via configurable buffering
--   **Automatic retry logic** with configurable retry counts
--   **Flexible worker patterns**: pool identical workers or mix different functions
--   **Pipeline composition** with method chaining or operator overloading
--   **Error handling** with Result types and graceful degradation
+-   **🚀 Async-first core** with optional multiprocessing for CPU-bound tasks
+-   **📦 Backpressure control** via configurable buffering to prevent overload
+-   **🔄 Automatic retries** with per-stage retry policies
+-   **👥 Flexible worker patterns** via worker pools, branching, and mixed functions
+-   **🔗 Composable pipelines** using method chaining (.stage()) or operator overloading (>>)
+-   **🛡 Error-aware** results with Result types for graceful degradation
 
 ## Installation
 
@@ -24,12 +30,12 @@ import asyncio
 from pypline import Pipeline, work_pool
 
 @work_pool(buffer=10, retries=3, num_workers=4)
-async def process_data(item):
+async def process_data(item, state):
     # Your processing logic here
     return item * 2
 
 @work_pool(buffer=5, retries=1)
-async def validate_data(item):
+async def validate_data(item, state):
     if item < 0:
         raise ValueError("Negative values not allowed")
     return item
@@ -43,7 +49,16 @@ result = await pipeline.run()
 
 ### Stages
 
-Stages are the building blocks of pypline pipelines. Each stage processes data through one or more worker functions with configurable concurrency and error handling.
+Stages are the building blocks of pipelines. Each stage processes data through one or more worker functions with configurable concurrency and error handling.
+
+All stage functions must conform to the **WorkerHandler protocol**, which requires two arguments:
+
+-   `item`: The data to process
+-   `state`: A `WorkerState` instance for maintaining persistent state across handler calls
+
+### WorkerState
+
+The `WorkerState` allows worker functions to maintain persistent state that survives across multiple item processing calls. This is especially useful for scenarios where state cannot cross multi-process boundaries, such as maintaining database connections, HTTP clients, or caches.
 
 #### Work Pool (`@work_pool`)
 
@@ -57,8 +72,14 @@ Creates a stage with multiple identical workers processing items from a shared q
     multi_proc=False, # Use multiprocessing instead of async
     fork_merge=None   # Optional: broadcast to all workers and merge results
 )
-async def my_stage(item):
-    return process_item(item)
+async def my_stage(item, state):
+    # WorkerState allows persistent state across handler calls
+    # Useful for maintaining connections, caches, etc.
+    if 'connection' not in state.values:
+        state.update(connection=create_connection())
+
+    conn = state.get('connection')
+    return process_item_with_connection(item, conn)
 ```
 
 #### Mix Pool (`@mix_pool`)
@@ -73,9 +94,9 @@ Creates a stage with different worker functions, useful for heterogeneous proces
 )
 def analysis_stage():
     return [
-        lambda x: analyze_sentiment(x),
-        lambda x: extract_keywords(x),
-        lambda x: classify_topic(x)
+        analyze_sentiment,
+        extract_keywords,
+        classify_topic
     ]
 ```
 
@@ -117,7 +138,7 @@ Items are distributed across workers (load balancing):
 
 ```python
 @work_pool(num_workers=4)  # Items distributed across 4 workers
-async def process(item):
+async def process(item, state):
     return heavy_computation(item)
 ```
 
@@ -127,7 +148,7 @@ Items are broadcast to all workers, results are merged:
 
 ```python
 @work_pool(num_workers=3, fork_merge=lambda results: sum(results))
-async def aggregate(item):
+async def aggregate(item, state):
     return analyze_aspect(item)  # Each worker analyzes different aspect
 ```
 
@@ -137,7 +158,7 @@ async def aggregate(item):
 
 ```python
 @work_pool(multi_proc=True, num_workers=8, buffer=50)
-def cpu_intensive(data):
+def cpu_intensive(data, state):
     # CPU-bound work runs in separate processes
     return complex_calculation(data)
 ```
@@ -146,11 +167,15 @@ def cpu_intensive(data):
 
 ```python
 @work_pool(retries=5, num_workers=10, buffer=100)
-async def fetch_data(url):
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        return response.json()
+async def fetch_data(url, state):
+    # Reuse HTTP client across requests for better performance
+    if 'client' not in state.values:
+        state.update(client=httpx.AsyncClient())
+
+    client = state.get('client')
+    response = await client.get(url)
+    response.raise_for_status()
+    return response.json()
 ```
 
 ### Multi-Stage Data Pipeline
@@ -161,21 +186,26 @@ from pypline import Pipeline, work_pool, mix_pool
 
 # Data ingestion stage
 @work_pool(buffer=50, num_workers=2)
-async def ingest(source):
+async def ingest(source, state):
     return await load_data(source)
 
 # Parallel analysis stage
 @mix_pool(fork_merge=lambda results: {**results[0], **results[1]})
 def analyze():
     return [
-        lambda item: {"sentiment": analyze_sentiment(item)},
-        lambda item: {"keywords": extract_keywords(item)}
+        lambda item, state: {"sentiment": analyze_sentiment(item)},
+        lambda item, state: {"keywords": extract_keywords(item)}
     ]
 
 # Output stage
 @work_pool(buffer=10, retries=2)
-async def store(enriched_item):
-    await database.store(enriched_item)
+async def store(enriched_item, state):
+    # Maintain database connection across calls
+    if 'db' not in state.values:
+        state.update(db=database.connect())
+
+    db = state.get('db')
+    await db.store(enriched_item)
     return enriched_item
 
 # Compose and run pipeline
@@ -202,7 +232,7 @@ Pypline uses Result types for robust error handling:
 from pypline.util import Result, is_err, unwrap
 
 @work_pool(retries=3)
-async def might_fail(item):
+async def might_fail(item, state):
     if should_fail(item):
         raise ValueError("Processing failed")
     return item * 2

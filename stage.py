@@ -5,14 +5,14 @@ from typing import (
     TypeVar,
     TypeAlias,
 )
-from worker import worker, mp_worker
+from worker import worker, mp_worker, default_mp_ctx_method
+from worker_state import WorkerHandler
 from dataclasses import dataclass
 from util import Err
 import asyncio
 from asyncio import Queue
 from async_util import (
     mp_to_async_queue, 
-    async_to_mp_queue, 
     async_to_mp_queue_with_ready, 
     multiplex_async_queues,
     multiplex_and_merge_async_queues,
@@ -43,7 +43,7 @@ class Stage:
     buffer: int
     retries: int
     multi_proc: bool  # True => multiprocessing
-    functions: list[Callable[[Any], Any]]
+    functions: list[WorkerHandler]
     merge: Optional[Callable[[list[Any]], Any]] = None # TODO
     _choose: PathChoice = PathChoice.One
 
@@ -82,15 +82,26 @@ class Stage:
 
             else:
                 outqs_async: list[Queue] = []
+                ctx_method = default_mp_ctx_method(self.functions)
                 # ---- MP workers ----
                 if self._choose is PathChoice.One:
                     shared_in = await make_shared_inbound_for_pool(
                         inbound, n_workers=len(self.functions), maxsize=self.buffer
                     )
-                    mp_in = await async_to_mp_queue_with_ready(shared_in, ctx_method="spawn")
+                    mp_in = await async_to_mp_queue_with_ready(
+                        shared_in,
+                        ctx_method=ctx_method,
+                        sentinel_count=len(self.functions),
+                    )
 
                     for fn in self.functions:
-                        mp_out, _proc = mp_worker(fn, 1, self.retries, mp_in)
+                        mp_out, _proc = mp_worker(
+                            fn,
+                            1,
+                            self.retries,
+                            mp_in,
+                            ctx_method=ctx_method,
+                        )
                         outqs_async.append(mp_to_async_queue(mp_out))
 
                     muxed = multiplex_async_queues(outqs_async)
@@ -100,8 +111,17 @@ class Stage:
                     per_ins = await make_broadcast_inbounds(inbound, sizes=sizes)
                     
                     for fn, q_in in zip(self.functions, per_ins):
-                        mp_in = await async_to_mp_queue_with_ready(q_in, ctx_method="spawn")
-                        mp_out, _proc = mp_worker(fn, 1, self.retries, mp_in)
+                        mp_in = await async_to_mp_queue_with_ready(
+                            q_in,
+                            ctx_method=ctx_method,
+                        )
+                        mp_out, _proc = mp_worker(
+                            fn,
+                            1,
+                            self.retries,
+                            mp_in,
+                            ctx_method=ctx_method,
+                        )
                         outqs_async.append(mp_to_async_queue(mp_out))
 
                     muxed = multiplex_and_merge_async_queues(outqs_async, merge)
@@ -129,7 +149,7 @@ def work_pool(
     num_workers: int = 1,
     multi_proc: bool = False,
     fork_merge: Callable[[list[Any]], Any] | None = None
-) -> Callable[[StageFunc], Stage]:
+) -> Callable[[WorkerHandler], Stage]:
     """
     Decorator to create stages with configurable options.
     
@@ -138,7 +158,7 @@ def work_pool(
     @work_pool(buffer=10, retries=3)  # with options
     @work_pool(stage_type=StageType.Fork, merge=lambda results: sum(results))
     """
-    def decorator(f: StageFunc) -> Stage:
+    def decorator(f: WorkerHandler) -> Stage:
         return Stage(
             buffer, 
             retries, 
@@ -156,7 +176,7 @@ def mix_pool(
     retries: int = 1,
     multi_proc: bool = False,
     fork_merge: Callable[[list[Any]], Any] | None = None
-) -> Callable[[Callable[[], list[StageFunc]]], Stage]:
+) -> Callable[[Callable[[], list[WorkerHandler]]], Stage]:
     def decorator(fs: Callable[[], list[Callable]]) -> Stage:
         return Stage(
             buffer, 
@@ -170,7 +190,7 @@ def mix_pool(
     return decorator
 
 # Keep as_stage for backwards compatibility, but always with defaults
-def as_stage(func: Callable[[Any], Any] | Stage) -> Stage:
+def as_stage(func: WorkerHandler | Stage) -> Stage:
     """Simple stage decorator with defaults."""
     if isinstance(func, Stage):
         return func

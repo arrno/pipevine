@@ -2,12 +2,13 @@
 
 import asyncio
 import pytest
-from typing import Iterator, Any
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import patch
+from worker_state import WorkerState
 
 from pipeline import Pipeline
 from stage import Stage, work_pool, mix_pool
-from util import Result, Err, is_err, is_ok, unwrap, get_err
+from util import Err, is_err, is_ok, get_err
 from async_util import SENTINEL
 
 
@@ -16,7 +17,7 @@ class TestPipelineCreation:
     
     def test_pipeline_creation_with_generator(self):
         data = [1, 2, 3, 4, 5]
-        pipeline = Pipeline(iter(data))
+        pipeline = Pipeline(iter(data), True)
         
         assert pipeline.generator is not None
         assert pipeline.stages == []
@@ -45,7 +46,7 @@ class TestPipelineStageManagement:
     
     def test_stage_method(self):
         @work_pool()
-        def double(x: int) -> int:
+        def double(x: int, state: WorkerState) -> int:
             return x * 2
         
         pipeline = Pipeline(iter([1, 2, 3]))
@@ -67,11 +68,11 @@ class TestPipelineStageManagement:
     
     def test_multiple_stages(self):
         @work_pool()
-        def add_one(x: int) -> int:
+        def add_one(x: int, state: WorkerState) -> int:
             return x + 1
         
         @work_pool() 
-        def multiply_two(x: int) -> int:
+        def multiply_two(x: int, state: WorkerState) -> int:
             return x * 2
         
         pipeline = Pipeline(iter([1, 2, 3]))
@@ -84,7 +85,7 @@ class TestPipelineStageManagement:
     
     def test_rshift_operator(self):
         @work_pool()
-        def increment(x: int) -> int:
+        def increment(x: int, state: WorkerState) -> int:
             return x + 1
         
         pipeline = Pipeline(iter([1, 2, 3]))
@@ -96,11 +97,11 @@ class TestPipelineStageManagement:
     
     def test_chained_rshift_operators(self):
         @work_pool()
-        def add_one(x: int) -> int:
+        def add_one(x: int, state: WorkerState) -> int:
             return x + 1
         
         @work_pool()
-        def multiply_three(x: int) -> int:
+        def multiply_three(x: int, state: WorkerState) -> int:
             return x * 3
         
         data = [1, 2, 3]
@@ -117,7 +118,7 @@ class TestPipelineExecution:
     @pytest.mark.asyncio
     async def test_simple_pipeline_execution(self):
         @work_pool()
-        def double(x: int) -> int:
+        def double(x: int, state: WorkerState) -> int:
             return x * 2
         
         data = [1, 2, 3]
@@ -133,11 +134,11 @@ class TestPipelineExecution:
     @pytest.mark.asyncio
     async def test_multi_stage_pipeline(self):
         @work_pool()
-        def add_one(x: int) -> int:
+        def add_one(x: int, state: WorkerState) -> int:
             return x + 1
         
         @work_pool()
-        def multiply_two(x: int) -> int:
+        def multiply_two(x: int, state: WorkerState) -> int:
             return x * 2
         
         data = [1, 2, 3]
@@ -149,11 +150,49 @@ class TestPipelineExecution:
         assert is_ok(result)
         # Results would be: (1+1)*2=4, (2+1)*2=6, (3+1)*2=8
         # But we don't capture the final output in this test
-    
+
+    @pytest.mark.asyncio
+    async def test_multi_stage_pipeline_num_workers(self):
+        @work_pool(num_workers=2)
+        def add_one(x: int, state: WorkerState) -> int:
+            return x + 1
+        
+        @work_pool(num_workers=3)
+        def multiply_two(x: int, state: WorkerState) -> int:
+            return x * 2
+        
+        data = [1, 2, 3]
+        pipeline = Pipeline(iter(data)) >> add_one >> multiply_two
+        pipeline.log = False
+        
+        result = await pipeline.run()
+        
+        assert is_ok(result)
+        # Results would be: (1+1)*2=4, (2+1)*2=6, (3+1)*2=8
+        # But we don't capture the final output in this test
+
+    @pytest.mark.asyncio
+    async def test_multi_stage_mp_pipeline(self):
+        @work_pool(num_workers=2, multi_proc=True)
+        def add_one(x: int, state: WorkerState) -> int:
+            return x + 1
+
+        @work_pool(num_workers=3, multi_proc=True)
+        def multiply_two(x: int, state: WorkerState) -> int:
+            return x * 2
+
+        data = range(10)
+        pipeline = Pipeline(iter(data)) >> add_one >> multiply_two
+        pipeline.log = False
+        
+        result = await pipeline.run()
+        
+        assert is_ok(result)
+
     @pytest.mark.asyncio
     async def test_pipeline_with_no_generator(self):
         @work_pool()
-        def identity(x: Any) -> Any:
+        def identity(x: Any, state: WorkerState) -> Any:
             return x
         
         pipeline = Pipeline(iter([]))
@@ -184,7 +223,7 @@ class TestPipelineExecution:
             yield 3  # This won't be reached
         
         @work_pool()
-        def identity(x: Any) -> Any:
+        def identity(x: Any, state: WorkerState) -> Any:
             return x
         
         pipeline = Pipeline(failing_generator()) >> identity
@@ -207,7 +246,7 @@ class TestPipelineErrorHandling:
             raise ValueError("Generator error")
         
         @work_pool()
-        def identity(x: int) -> int:
+        def identity(x: int, state: WorkerState) -> int:
             return x
         
         pipeline = Pipeline(error_generator()) >> identity
@@ -225,7 +264,7 @@ class TestPipelineErrorHandling:
         data = [1, 2, 3]
         
         @work_pool()
-        def identity(x: int) -> int:
+        def identity(x: int, state: WorkerState) -> int:
             return x
         
         pipeline = Pipeline(iter(data)) >> identity
@@ -244,7 +283,7 @@ class TestPipelineErrorHandling:
         data = [1, 2, 3]
         
         @work_pool()
-        def identity(x: int) -> int:
+        def identity(x: int, state: WorkerState) -> int:
             return x
         
         pipeline = Pipeline(iter(data)) >> identity
@@ -266,7 +305,7 @@ class TestPipelineErrorHandling:
             yield 3
         
         @work_pool()
-        def identity(x: int) -> int:
+        def identity(x: int, state: WorkerState) -> int:
             return x
         
         pipeline = Pipeline(error_data()) >> identity
@@ -288,7 +327,7 @@ class TestPipelineDataHandling:
         data = [1, 2, 3, 4, 5]
         
         @work_pool()
-        def identity(x: int) -> int:
+        def identity(x: int, state: WorkerState) -> int:
             return x
         
         pipeline = Pipeline(iter(data)) >> identity
@@ -306,7 +345,7 @@ class TestPipelineDataHandling:
             yield 3
         
         @work_pool()
-        def identity(x: int) -> int:
+        def identity(x: int, state: WorkerState) -> int:
             return x
         
         pipeline = Pipeline(mixed_data()) >> identity
@@ -328,7 +367,7 @@ class TestPipelineDataHandling:
             yield 3  # Never reached
         
         @work_pool()
-        def identity(x: int) -> int:
+        def identity(x: int, state: WorkerState) -> int:
             return x
         
         pipeline = Pipeline(failing_iterator()) >> identity
@@ -348,18 +387,18 @@ class TestPipelineIntegration:
         """Test pipeline with various stage types and configurations."""
         
         @work_pool(buffer=5, num_workers=2)
-        def preprocess(x: int) -> int:
+        def preprocess(x: int, state: WorkerState) -> int:
             return x + 1
         
         @mix_pool(buffer=3, fork_merge=lambda results: sum(results))
         def analyze():
             return [
-                lambda x: x * 2,  # Double
-                lambda x: x * 3   # Triple  
+                lambda x, s: x * 2,  # Double
+                lambda x, s: x * 3   # Triple  
             ]
         
         @work_pool(retries=2)
-        def postprocess(x: int) -> int:
+        def postprocess(x: int, state: WorkerState) -> int:
             return x // 2  # Integer division
         
         data = [1, 2, 3]
@@ -374,12 +413,12 @@ class TestPipelineIntegration:
         """Test pipeline with async stage functions."""
         
         @work_pool(buffer=3)
-        async def async_increment(x: int) -> int:
+        async def async_increment(x: int, state: WorkerState) -> int:
             await asyncio.sleep(0.001)  # Small async delay
             return x + 1
         
         @work_pool(buffer=2)
-        async def async_double(x: int) -> int:
+        async def async_double(x: int, state: WorkerState) -> int:
             await asyncio.sleep(0.001)
             return x * 2
         
@@ -395,13 +434,13 @@ class TestPipelineIntegration:
         """Test pipeline behavior when stages have errors."""
         
         @work_pool(retries=3)
-        def sometimes_fails(x: int) -> int:
+        def sometimes_fails(x: int, state: WorkerState) -> int:
             if x == 3:
                 raise ValueError("Cannot process 3")
             return x * 10
         
         @work_pool()
-        def final_stage(x: int) -> int:
+        def final_stage(x: int, state: WorkerState) -> int:
             return x + 100
         
         data = [1, 2, 3, 4, 5]
@@ -418,7 +457,7 @@ class TestPipelineIntegration:
         """Test pipeline behavior with empty input data."""
         
         @work_pool()
-        def process_item(x: int) -> int:
+        def process_item(x: int, state: WorkerState) -> int:
             return x * 2
         
         empty_data = []
@@ -433,11 +472,11 @@ class TestPipelineIntegration:
         """Test pipeline with larger dataset."""
         
         @work_pool(buffer=10, num_workers=3)
-        def fast_process(x: int) -> int:
+        def fast_process(x: int, state: WorkerState) -> int:
             return x + 1
         
         @work_pool(buffer=5)
-        def final_transform(x: int) -> int:
+        def final_transform(x: int, state: WorkerState) -> int:
             return x * 2
         
         large_data = range(100)
@@ -456,15 +495,15 @@ class TestPipelineChaining:
         """Test building pipeline with method chaining."""
         
         @work_pool()
-        def stage1(x: int) -> int:
+        def stage1(x: int, state: WorkerState) -> int:
             return x + 1
         
         @work_pool()
-        def stage2(x: int) -> int:
+        def stage2(x: int, state: WorkerState) -> int:
             return x * 2
         
         @work_pool()
-        def stage3(x: int) -> int:
+        def stage3(x: int, state: WorkerState) -> int:
             return x - 1
         
         data = [1, 2, 3]
@@ -483,11 +522,11 @@ class TestPipelineChaining:
         """Test building pipeline with >> operators."""
         
         @work_pool()
-        def stage1(x: int) -> int:
+        def stage1(x: int, state: WorkerState) -> int:
             return x + 5
         
         @work_pool() 
-        def stage2(x: int) -> int:
+        def stage2(x: int, state: WorkerState) -> int:
             return x * 3
         
         data = [1, 2, 3]

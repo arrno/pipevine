@@ -9,6 +9,7 @@ async/await and multiprocessing execution models.
 from .pipeline import Pipeline
 from .stage import Stage, work_pool, mix_pool, as_stage, PathChoice
 from .util import Result, Err, is_err, unwrap, with_retry
+from .worker_state import WorkerHandler, WorkerState
 
 __version__ = "0.1.0"
 __author__ = "Aaron Hough"
@@ -25,5 +26,7 @@ __all__ = [
     "Err",
     "is_err", 
     "unwrap",
-    "with_retry"
+    "with_retry",
+    "WorkerHandler",
+    "WorkerState"
 ]
