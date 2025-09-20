@@ -1,6 +1,5 @@
 include README.md
 include LICENSE
-include py.typed
-recursive-include pypline *.py
+graft parllel/src/parllel
 global-exclude __pycache__
 global-exclude *.py[co]

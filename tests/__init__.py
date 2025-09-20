@@ -1,1 +1,1 @@
-# Tests for pypline library
+# Tests for parllel library

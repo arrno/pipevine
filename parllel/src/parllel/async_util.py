@@ -4,13 +4,13 @@ import asyncio
 import threading
 from multiprocessing import get_context
 import multiprocessing
-from typing import Any, Optional, Callable
+from typing import Any, Optional, Callable, Final
 from enum import Enum, auto
 
 class Marker(Enum):
     STOP = auto()
     
-SENTINEL = Marker.STOP
+SENTINEL: Final[Marker] = Marker.STOP
 
 # ---- MP -> Async bridge ----
 def mp_to_async_queue(mpq: multiprocessing.Queue, *, loop: Optional[asyncio.AbstractEventLoop] = None) -> asyncio.Queue:

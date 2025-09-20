@@ -1,26 +1,23 @@
-from enum import Enum, auto
-from typing import (
-    Callable,
-    Any,
-    TypeVar,
-    TypeAlias,
-)
-from worker import worker, mp_worker, default_mp_ctx_method
-from worker_state import WorkerHandler
-from dataclasses import dataclass
-from util import Err
+from __future__ import annotations
+
 import asyncio
 from asyncio import Queue
-from async_util import (
-    mp_to_async_queue, 
-    async_to_mp_queue_with_ready, 
-    multiplex_async_queues,
-    multiplex_and_merge_async_queues,
+from dataclasses import dataclass
+from enum import Enum, auto
+from typing import Any, Callable, Optional, TypeAlias, TypeVar
+
+from .async_util import (
+    SENTINEL,
+    async_to_mp_queue_with_ready,
     make_broadcast_inbounds,
-    make_shared_inbound_for_pool, 
-    SENTINEL
+    make_shared_inbound_for_pool,
+    mp_to_async_queue,
+    multiplex_and_merge_async_queues,
+    multiplex_async_queues,
 )
-from typing import Optional, TypeAlias
+from .util import Err
+from .worker import default_mp_ctx_method, mp_worker, worker
+from .worker_state import WorkerHandler
 
 T = TypeVar("T")
 Result: TypeAlias = T | Err

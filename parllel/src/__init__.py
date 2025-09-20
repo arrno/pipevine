@@ -1,15 +1,16 @@
 """
-Pypline - A high-performance async pipeline processing library for Python.
+Parllel - A high-performance async pipeline processing library for Python.
 
 This library provides tools for building concurrent data processing pipelines
 with backpressure control, automatic error handling, and support for both
 async/await and multiprocessing execution models.
 """
 
-from .pipeline import Pipeline
-from .stage import Stage, work_pool, mix_pool, as_stage, PathChoice
-from .util import Result, Err, is_err, unwrap, with_retry
-from .worker_state import WorkerHandler, WorkerState
+from .parllel.pipeline import Pipeline
+from .parllel.stage import Stage, work_pool, mix_pool, as_stage, PathChoice
+from .parllel.util import Result, Err, is_err, unwrap, with_retry
+from .parllel.worker_state import WorkerHandler, WorkerState
+from .parllel.async_util import SENTINEL
 
 __version__ = "0.1.0"
 __author__ = "Aaron Hough"
@@ -28,5 +29,6 @@ __all__ = [
     "unwrap",
     "with_retry",
     "WorkerHandler",
-    "WorkerState"
+    "WorkerState",
+    "SENTINEL"
 ]

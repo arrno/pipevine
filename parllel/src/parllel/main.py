@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import asyncio
-from util import Result, err_as_value
-from pipeline import Pipeline
-from stage import work_pool, mix_pool
 from typing import Callable
-from worker_state import WorkerState, WorkerHandler
+
+from .pipeline import Pipeline
+from .stage import mix_pool, work_pool
+from .util import Result, err_as_value
+from .worker_state import WorkerHandler, WorkerState
 
 @work_pool(buffer=1, retries=1, num_workers=1)
 async def double(val: int, state: WorkerState) -> Result[int]:

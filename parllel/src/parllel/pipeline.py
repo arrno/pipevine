@@ -1,9 +1,12 @@
-from stage import Stage
-from util import Result, is_err, unwrap, Err
-from typing import Any, Iterator
+from __future__ import annotations
+
 import asyncio
 from asyncio import Queue, shield
-from async_util import SENTINEL
+from typing import Any, Iterator
+
+from .async_util import SENTINEL
+from .stage import Stage
+from .util import Err, Result, is_err, unwrap
 
 class Pipeline:
     

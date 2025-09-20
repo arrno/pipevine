@@ -1,19 +1,21 @@
 """Tests for worker module - async and multiprocessing workers."""
 
 import asyncio
-import pytest
+from asyncio import Queue
 from typing import Any
 
-from worker import worker, worker_no_buf, mp_worker
-from async_util import SENTINEL
-from worker_state import WorkerState
+import pytest
+
+from parllel.async_util import SENTINEL
+from parllel.worker import mp_worker, worker, worker_no_buf
+from parllel.worker_state import WorkerState
 
 class TestWorkerNoBuf:
     """Test the worker_no_buf function."""
     
     @pytest.mark.asyncio
-    async def test_basic_processing(self):
-        inbound = asyncio.Queue(maxsize=5)
+    async def test_basic_processing(self) -> None:
+        inbound: Queue = asyncio.Queue(maxsize=5)
         
         # Simple doubling function
         def double(x: int, state: WorkerState) -> int:
@@ -38,8 +40,8 @@ class TestWorkerNoBuf:
         assert results == [2, 4, 6]
     
     @pytest.mark.asyncio
-    async def test_with_retries(self):
-        inbound = asyncio.Queue(maxsize=5)
+    async def test_with_retries(self) -> None:
+        inbound: Queue = asyncio.Queue(maxsize=5)
         call_count = 0
         
         def flaky_function(x: int, state: WorkerState) -> int:
@@ -62,8 +64,8 @@ class TestWorkerNoBuf:
         assert call_count == 2  # First attempt failed, second succeeded
     
     @pytest.mark.asyncio
-    async def test_async_function(self):
-        inbound = asyncio.Queue(maxsize=5)
+    async def test_async_function(self) -> None:
+        inbound: Queue = asyncio.Queue(maxsize=5)
         
         async def async_double(x: int, state: WorkerState) -> int:
             await asyncio.sleep(0.01)  # Small delay
@@ -85,8 +87,8 @@ class TestWorker:
     """Test the worker function with buffering."""
     
     @pytest.mark.asyncio
-    async def test_basic_processing_with_buffer(self):
-        inbound = asyncio.Queue(maxsize=6)
+    async def test_basic_processing_with_buffer(self) -> None:
+        inbound: Queue = asyncio.Queue(maxsize=6)
         
         def increment(x: int, state: WorkerState) -> int:
             return x + 1
@@ -109,8 +111,8 @@ class TestWorker:
         assert results == [1, 2, 3, 4, 5]
     
     @pytest.mark.asyncio
-    async def test_zero_buffer_delegates_to_worker_no_buf(self):
-        inbound = asyncio.Queue(maxsize=5)
+    async def test_zero_buffer_delegates_to_worker_no_buf(self) -> None:
+        inbound: Queue = asyncio.Queue(maxsize=5)
         
         def identity(x: Any, state: WorkerState) -> Any:
             return x
@@ -127,8 +129,8 @@ class TestWorker:
         assert sentinel is SENTINEL
     
     @pytest.mark.asyncio
-    async def test_negative_buffer_delegates_to_worker_no_buf(self):
-        inbound = asyncio.Queue(maxsize=5)
+    async def test_negative_buffer_delegates_to_worker_no_buf(self) -> None:
+        inbound: Queue = asyncio.Queue(maxsize=5)
         
         def identity(x: Any, state: WorkerState) -> Any:
             return x
@@ -145,8 +147,8 @@ class TestWorker:
         assert sentinel is SENTINEL
     
     @pytest.mark.asyncio
-    async def test_error_handling_with_retries(self):
-        inbound = asyncio.Queue(maxsize=5)
+    async def test_error_handling_with_retries(self) -> None:
+        inbound: Queue = asyncio.Queue(maxsize=5)
         
         failed = False
         def sometimes_fails(x: int, state: WorkerState) -> int:
@@ -192,7 +194,7 @@ def simple_func(x: int, state: WorkerState) -> int:
 class TestMPWorker:
     """Test the multiprocessing worker."""
     
-    def test_basic_mp_processing(self):
+    def test_basic_mp_processing(self) -> None:
         # Create MP queues
         from multiprocessing import get_context
         ctx = get_context("spawn")
@@ -219,7 +221,7 @@ class TestMPWorker:
         assert results == [4, 9, 16]
         assert not proc.is_alive()
     
-    def test_mp_worker_with_retries(self):
+    def test_mp_worker_with_retries(self) -> None:
         from multiprocessing import get_context
         ctx = get_context("spawn")
         inbound = ctx.Queue(maxsize=5)
@@ -245,7 +247,7 @@ class TestMPWorker:
         assert len(results) >= 1  # At least the successful ones
         assert 4 in results  # 2 * 2
     
-    def test_mp_worker_process_lifecycle(self):
+    def test_mp_worker_process_lifecycle(self) -> None:
         from multiprocessing import get_context
         ctx = get_context("spawn")
         inbound = ctx.Queue(maxsize=5)
@@ -274,11 +276,11 @@ class TestWorkerIntegration:
     """Integration tests combining different worker types."""
     
     @pytest.mark.asyncio
-    async def test_worker_chain_simulation(self):
+    async def test_worker_chain_simulation(self) -> None:
         """Simulate chaining workers (like in a pipeline)."""
         
         # First stage
-        stage1_in = asyncio.Queue(maxsize=10)
+        stage1_in: Queue = asyncio.Queue(maxsize=10)
         
         def add_one(x: int, state: WorkerState) -> int:
             return x + 1
@@ -310,10 +312,10 @@ class TestWorkerIntegration:
         assert results == [2, 4, 6]
     
     @pytest.mark.asyncio
-    async def test_concurrent_workers_same_input(self):
+    async def test_concurrent_workers_same_input(self) -> None:
         """Test multiple workers processing from the same input queue."""
         
-        shared_input = asyncio.Queue(maxsize=10)
+        shared_input: Queue = asyncio.Queue(maxsize=10)
         
         def process_with_id(x: int, state: WorkerState) -> tuple:
             # Add worker "id" to track which worker processed what
@@ -366,8 +368,8 @@ class TestSentinelHandling:
     """Test proper SENTINEL propagation."""
     
     @pytest.mark.asyncio
-    async def test_sentinel_propagation_async(self):
-        inbound = asyncio.Queue(maxsize=5)
+    async def test_sentinel_propagation_async(self) -> None:
+        inbound: Queue = asyncio.Queue(maxsize=5)
         
         def identity(x: Any, state: WorkerState) -> Any:
             return x
@@ -384,7 +386,7 @@ class TestSentinelHandling:
         result2 = await outbound.get()
         assert result2 is SENTINEL
     
-    def test_sentinel_propagation_mp(self):
+    def test_sentinel_propagation_mp(self) -> None:
         from multiprocessing import get_context
         ctx = get_context("spawn")
         inbound = ctx.Queue(maxsize=5)

@@ -1,29 +1,37 @@
 """Tests for async_util module - async/MP queue bridging and multiplexing utilities."""
 
 import asyncio
-import pytest
+from asyncio import Queue
 from multiprocessing import get_context
-from typing import List
+from multiprocessing.queues import Queue as MPQueue
+from typing import List, Any
 
-from async_util import (
-    SENTINEL, mp_to_async_queue, async_to_mp_queue, async_to_mp_queue_with_ready,
-    multiplex_async_queues, multiplex_and_merge_async_queues,
-    make_shared_inbound_for_pool, make_broadcast_inbounds
+import pytest
+
+from parllel.async_util import (
+    SENTINEL,
+    async_to_mp_queue,
+    async_to_mp_queue_with_ready,
+    make_broadcast_inbounds,
+    make_shared_inbound_for_pool,
+    mp_to_async_queue,
+    multiplex_and_merge_async_queues,
+    multiplex_async_queues,
 )
 
 
 class TestSentinel:
     """Test SENTINEL object."""
     
-    def test_sentinel_is_object(self):
+    def test_sentinel_is_object(self) -> None:
         assert SENTINEL is not None
         assert isinstance(SENTINEL, object)
         
-    def test_sentinel_identity(self):
+    def test_sentinel_identity(self) -> None:
         # SENTINEL should maintain identity
         assert SENTINEL is SENTINEL
         
-    def test_sentinel_comparison(self):
+    def test_sentinel_comparison(self) -> None:
         assert SENTINEL == SENTINEL
         assert not (SENTINEL != SENTINEL)
 
@@ -32,7 +40,7 @@ class TestMPToAsyncBridge:
     """Test MP to async queue bridging."""
     
     @pytest.mark.asyncio
-    async def test_mp_to_async_basic(self):
+    async def test_mp_to_async_basic(self) -> None:
         """Test basic MP to async queue forwarding."""
         ctx = get_context("spawn")
         mp_queue = ctx.Queue(maxsize=5)
@@ -57,7 +65,7 @@ class TestMPToAsyncBridge:
         assert results == [1, 2, 3]
     
     @pytest.mark.asyncio
-    async def test_mp_to_async_empty_queue(self):
+    async def test_mp_to_async_empty_queue(self) -> None:
         """Test MP to async with empty queue."""
         ctx = get_context("spawn")
         mp_queue = ctx.Queue(maxsize=1)
@@ -69,10 +77,10 @@ class TestMPToAsyncBridge:
         assert first_item is SENTINEL
     
     @pytest.mark.asyncio  
-    async def test_mp_to_async_large_data(self):
+    async def test_mp_to_async_large_data(self) -> None:
         """Test MP to async with larger dataset."""
         ctx = get_context("spawn")
-        mp_queue = ctx.Queue(maxsize=50)
+        mp_queue: MPQueue = ctx.Queue(maxsize=50)
         
         # Add lots of data
         test_data = list(range(20))
@@ -80,14 +88,14 @@ class TestMPToAsyncBridge:
             mp_queue.put(item)
         mp_queue.put(SENTINEL)
         
-        async_queue = mp_to_async_queue(mp_queue)
+        async_queue: Queue = mp_to_async_queue(mp_queue)
         
         results = []
         while True:
-            item = await async_queue.get()
-            if item is SENTINEL:
+            got = await async_queue.get()
+            if got is SENTINEL:
                 break
-            results.append(item)
+            results.append(got)
         
         assert results == test_data
 
@@ -96,9 +104,9 @@ class TestAsyncToMPBridge:
     """Test async to MP queue bridging."""
     
     @pytest.mark.asyncio
-    async def test_async_to_mp_basic(self):
+    async def test_async_to_mp_basic(self) -> None:
         """Test basic async to MP queue forwarding."""
-        async_queue = asyncio.Queue(maxsize=5)
+        async_queue: Queue = asyncio.Queue(maxsize=5)
         
         # Add test data
         await async_queue.put("hello")
@@ -119,9 +127,9 @@ class TestAsyncToMPBridge:
         assert results == ["hello", "world"]
     
     @pytest.mark.asyncio
-    async def test_async_to_mp_with_numbers(self):
+    async def test_async_to_mp_with_numbers(self) -> None:
         """Test async to MP with numeric data."""
-        async_queue = asyncio.Queue(maxsize=10)
+        async_queue: Queue[Any] = asyncio.Queue(maxsize=10)
         
         test_numbers = [1, 2, 3, 4, 5]
         for num in test_numbers:
@@ -144,9 +152,9 @@ class TestAsyncMultiplexing:
     """Test async queue multiplexing."""
     
     @pytest.mark.asyncio
-    async def test_multiplex_single_queue(self):
+    async def test_multiplex_single_queue(self) -> None:
         """Test multiplexing with single queue."""
-        queue1 = asyncio.Queue(maxsize=5)
+        queue1: Queue[Any] = asyncio.Queue(maxsize=5)
         
         await queue1.put("item1")
         await queue1.put("item2")
@@ -164,10 +172,10 @@ class TestAsyncMultiplexing:
         assert results == ["item1", "item2"]
     
     @pytest.mark.asyncio
-    async def test_multiplex_multiple_queues(self):
+    async def test_multiplex_multiple_queues(self) -> None:
         """Test multiplexing multiple queues."""
-        queue1 = asyncio.Queue(maxsize=5)
-        queue2 = asyncio.Queue(maxsize=5)
+        queue1: Queue[Any] = asyncio.Queue(maxsize=5)
+        queue2: Queue[Any] = asyncio.Queue(maxsize=5)
         
         # Add data to both queues
         await queue1.put("q1_item1")
@@ -204,10 +212,10 @@ class TestAsyncMultiplexing:
     #     assert item is SENTINEL
     
     @pytest.mark.asyncio
-    async def test_multiplex_and_merge(self):
+    async def test_multiplex_and_merge(self) -> None:
         """Test multiplexing with merge function."""
-        queue1 = asyncio.Queue(maxsize=5)
-        queue2 = asyncio.Queue(maxsize=5)
+        queue1: Queue[Any] = asyncio.Queue(maxsize=5)
+        queue2: Queue[Any] = asyncio.Queue(maxsize=5)
         
         # Add synchronized data
         await queue1.put(1)
@@ -237,9 +245,9 @@ class TestSharedInbound:
     """Test shared inbound queue creation."""
     
     @pytest.mark.asyncio
-    async def test_make_shared_inbound_basic(self):
+    async def test_make_shared_inbound_basic(self) -> None:
         """Test creating shared inbound queue."""
-        upstream = asyncio.Queue(maxsize=10)
+        upstream: Queue[Any] = asyncio.Queue(maxsize=10)
         
         # Add test data
         await upstream.put(1)
@@ -265,9 +273,9 @@ class TestSharedInbound:
         assert sentinel_count == 2
     
     @pytest.mark.asyncio
-    async def test_shared_inbound_single_worker(self):
+    async def test_shared_inbound_single_worker(self) -> None:
         """Test shared inbound with single worker."""
-        upstream = asyncio.Queue(maxsize=5)
+        upstream: Queue[Any] = asyncio.Queue(maxsize=5)
         
         await upstream.put("test")
         await upstream.put(SENTINEL)
@@ -281,9 +289,9 @@ class TestSharedInbound:
         assert item2 is SENTINEL
     
     @pytest.mark.asyncio
-    async def test_shared_inbound_empty_upstream(self):
+    async def test_shared_inbound_empty_upstream(self) -> None:
         """Test shared inbound with empty upstream."""
-        upstream = asyncio.Queue(maxsize=1)
+        upstream: Queue[Any] = asyncio.Queue(maxsize=1)
         await upstream.put(SENTINEL)
         
         shared = await make_shared_inbound_for_pool(upstream, n_workers=3)
@@ -301,9 +309,9 @@ class TestBroadcastInbounds:
     """Test broadcast inbound queues."""
     
     @pytest.mark.asyncio
-    async def test_make_broadcast_basic(self):
+    async def test_make_broadcast_basic(self) -> None:
         """Test creating broadcast inbound queues."""
-        upstream = asyncio.Queue(maxsize=10)
+        upstream: Queue[Any] = asyncio.Queue(maxsize=10)
         
         await upstream.put("broadcast_item")
         await upstream.put(SENTINEL)
@@ -327,9 +335,9 @@ class TestBroadcastInbounds:
         assert sentinel2 is SENTINEL
     
     @pytest.mark.asyncio
-    async def test_broadcast_multiple_items(self):
+    async def test_broadcast_multiple_items(self) -> None:
         """Test broadcast with multiple items."""
-        upstream = asyncio.Queue(maxsize=10)
+        upstream: Queue[Any] = asyncio.Queue(maxsize=10)
         
         test_items = ["a", "b", "c"]
         for item in test_items:
@@ -342,17 +350,17 @@ class TestBroadcastInbounds:
         for queue in broadcast_queues:
             received_items = []
             while True:
-                item = await queue.get()
-                if item is SENTINEL:
+                got = await queue.get()
+                if got is SENTINEL:
                     break
-                received_items.append(item)
+                received_items.append(got)
             
             assert received_items == test_items
     
     @pytest.mark.asyncio
-    async def test_broadcast_different_buffer_sizes(self):
+    async def test_broadcast_different_buffer_sizes(self) -> None:
         """Test broadcast with different buffer sizes."""
-        upstream = asyncio.Queue(maxsize=5)
+        upstream: Queue[Any] = asyncio.Queue(maxsize=5)
         
         await upstream.put("item")
         await upstream.put(SENTINEL)
@@ -374,9 +382,9 @@ class TestBroadcastInbounds:
             assert sentinel is SENTINEL
     
     @pytest.mark.asyncio
-    async def test_broadcast_empty_sizes(self):
+    async def test_broadcast_empty_sizes(self) -> None:
         """Test broadcast with empty sizes list."""
-        upstream = asyncio.Queue(maxsize=5)
+        upstream: Queue[Any] = asyncio.Queue(maxsize=5)
         await upstream.put(SENTINEL)
         
         broadcast_queues = await make_broadcast_inbounds(upstream, sizes=[])
@@ -388,7 +396,7 @@ class TestAsyncUtilIntegration:
     """Integration tests combining multiple async_util functions."""
     
     @pytest.mark.asyncio
-    async def test_mp_async_mp_roundtrip(self):
+    async def test_mp_async_mp_roundtrip(self) -> None:
         """Test MP->Async->MP roundtrip."""
         # Start with MP queue
         ctx = get_context("spawn")
@@ -414,12 +422,12 @@ class TestAsyncUtilIntegration:
         assert sentinel is SENTINEL
     
     @pytest.mark.asyncio
-    async def test_complex_multiplexing_workflow(self):
+    async def test_complex_multiplexing_workflow(self) -> None:
         """Test complex workflow with multiple multiplexing operations."""
         # Create multiple source queues
         sources = []
         for i in range(3):
-            queue = asyncio.Queue(maxsize=5)
+            queue: Queue[Any] = asyncio.Queue(maxsize=5)
             await queue.put(f"item_{i}_1")
             await queue.put(f"item_{i}_2")
             await queue.put(SENTINEL)

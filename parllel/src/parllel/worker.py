@@ -1,14 +1,17 @@
+from __future__ import annotations
+
 import asyncio
+import multiprocessing as mp
 import pickle
 from asyncio import Queue, shield
-from typing import Any, TypeVar, Tuple, Sequence
-from util import unwrap, with_retry, is_ok
-import multiprocessing as mp
-from multiprocessing import get_all_start_methods, Queue as MPQueue
-from multiprocessing.process import BaseProcess
-from worker_state import WorkerState, WorkerHandler
 from collections import deque
-from async_util import SENTINEL
+from multiprocessing import Queue as MPQueue, get_all_start_methods
+from multiprocessing.process import BaseProcess
+from typing import Any, Sequence, Tuple, TypeVar
+
+from .async_util import SENTINEL
+from .util import is_ok, unwrap, with_retry
+from .worker_state import WorkerHandler, WorkerState
 
 T = TypeVar("T")
 
