@@ -1,8 +1,8 @@
-"""Pytest configuration and fixtures for parllel tests."""
+"""Pytest configuration and fixtures for pipevine tests."""
 
 import pytest
 import asyncio
-from parllel import Result
+from pipevine import Result
 from typing import AsyncGenerator, Generator, Any
 
 
@@ -56,11 +56,11 @@ def pytest_configure(config: pytest.Config) -> None:
 # Custom assertion helpers
 def assert_pipeline_result_ok(result: Result) -> None:
     """Assert that a pipeline result is OK."""
-    from parllel.util import is_ok
+    from pipevine.util import is_ok
     assert is_ok(result), f"Pipeline result should be OK, got: {result}"
 
 
 def assert_pipeline_result_error(result: Result) -> None:
     """Assert that a pipeline result is an error."""  
-    from parllel.util import is_err
+    from pipevine.util import is_err
     assert is_err(result), f"Pipeline result should be error, got: {result}"

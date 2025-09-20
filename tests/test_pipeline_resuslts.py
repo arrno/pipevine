@@ -4,10 +4,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from parllel.pipeline import Pipeline
-from parllel.stage import mix_pool, work_pool
-from parllel.util import is_ok
-from parllel.worker_state import WorkerState
+from pipevine.pipeline import Pipeline
+from pipevine.stage import mix_pool, work_pool
+from pipevine.util import is_ok
+from pipevine.worker_state import WorkerState
 
 
 # Multiprocessing-compatible handlers must be defined at module scope on macOS.

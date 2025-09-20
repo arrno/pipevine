@@ -6,9 +6,9 @@ from typing import Any, Callable
 
 import pytest
 
-from parllel.async_util import SENTINEL
-from parllel.stage import PathChoice, Stage, as_stage, mix_pool, work_pool
-from parllel.worker_state import WorkerState
+from pipevine.async_util import SENTINEL
+from pipevine.stage import PathChoice, Stage, as_stage, mix_pool, work_pool
+from pipevine.worker_state import WorkerState
 
 
 class TestStageClass:

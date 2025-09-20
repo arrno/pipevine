@@ -1,11 +1,11 @@
-# Parllel
+# Pipevine 🌱
 
 [![Tests](https://github.com/arrno/pypline/actions/workflows/tests.yml/badge.svg)](https://github.com/arrno/pypline/actions/workflows/tests.yml)
-![PyPI version](https://img.shields.io/pypi/v/parllel?label=PyPI%20version)
+![PyPI version](https://img.shields.io/pypi/v/pipevine?label=PyPI%20version)
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Parllel** is a lightweight, high-performance async pipeline library for Python. It helps you build fast, **concurrent dataflows** that are easy to compose, resilient to failure, and tuned for real-world workloads.
+**Pipevine** is a lightweight, high-performance async pipeline library for Python. It helps you build fast, **concurrent dataflows** that are easy to compose, resilient to failure, and tuned for real-world workloads.
 
 Think of it as a lighter alternative to frameworks like Celery, giving you **backpressure, retries, and flexible worker orchestration** without the infra commitment.
 
@@ -21,14 +21,14 @@ Think of it as a lighter alternative to frameworks like Celery, giving you **bac
 ## Installation
 
 ```bash
-pip install parllel
+pip install pipevine
 ```
 
 ## Quick Start
 
 ```python
 import asyncio
-from parllel import Pipeline, work_pool
+from pipevine import Pipeline, work_pool
 
 @work_pool(buffer=10, retries=3, num_workers=4)
 async def process_data(item, state):
@@ -183,7 +183,7 @@ async def fetch_data(url, state):
 
 ```python
 import asyncio
-from parllel import Pipeline, work_pool, mix_pool
+from pipevine import Pipeline, work_pool, mix_pool
 
 # Data ingestion stage
 @work_pool(buffer=50, num_workers=2)
@@ -255,10 +255,10 @@ result = await (
 
 ## Error Handling
 
-Parllel uses Result types for robust error handling:
+Pipevine uses Result types for robust error handling:
 
 ```python
-from parllel.util import Result, is_err, unwrap
+from pipevine.util import Result, is_err, unwrap
 
 @work_pool(retries=3)
 async def might_fail(item, state):

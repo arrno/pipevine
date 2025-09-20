@@ -8,7 +8,7 @@ from typing import List, Any
 
 import pytest
 
-from parllel.async_util import (
+from pipevine.async_util import (
     SENTINEL,
     async_to_mp_queue,
     async_to_mp_queue_with_ready,

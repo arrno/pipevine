@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from parllel.async_util import SENTINEL
-from parllel.worker import mp_worker, worker, worker_no_buf
-from parllel.worker_state import WorkerState
+from pipevine.async_util import SENTINEL
+from pipevine.worker import mp_worker, worker, worker_no_buf
+from pipevine.worker_state import WorkerState
 
 class TestWorkerNoBuf:
     """Test the worker_no_buf function."""

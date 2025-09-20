@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "parllel"
+name = "pipevine"
 version = "0.1.0"
 description = "A high-performance async pipeline processing library for Python"
 readme = "README.md"
@@ -53,14 +53,14 @@ dev = [
 ]
 
 [tool.setuptools]
-package-dir = {"" = "parllel/src"}
+package-dir = { "" = "pipevine/src" }
 
 [tool.setuptools.packages.find]
-where = ["parllel/src"]
-include = ["parllel*"]
+where = ["pipevine/src"]
+include = ["pipevine*"]
 
 [tool.setuptools.package-data]
-parllel = ["py.typed"]
+pipevine = ["py.typed"]
 
 [tool.black]
 line-length = 88
@@ -105,4 +105,4 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-pythonpath = ["parllel/src"]
+pythonpath = ["pipevine/src"]

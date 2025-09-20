@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from parllel.util import (
+from pipevine.util import (
     Err,
     err_as_value,
     get_err,

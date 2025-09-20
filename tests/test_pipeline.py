@@ -6,11 +6,11 @@ from unittest.mock import patch
 
 import pytest
 
-from parllel.async_util import SENTINEL
-from parllel.pipeline import Pipeline
-from parllel.stage import Stage, mix_pool, work_pool
-from parllel.util import Err, get_err, is_err, is_ok
-from parllel.worker_state import WorkerState
+from pipevine.async_util import SENTINEL
+from pipevine.pipeline import Pipeline
+from pipevine.stage import Stage, mix_pool, work_pool
+from pipevine.util import Err, get_err, is_err, is_ok
+from pipevine.worker_state import WorkerState
 
 
 class TestPipelineCreation:

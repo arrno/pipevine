@@ -1,4 +1,4 @@
-"""Parllel - A high-performance async pipeline processing library for Python."""
+"""Pipevine - A high-performance async pipeline processing library for Python."""
 
 from .pipeline import Pipeline
 from .stage import Stage, work_pool, mix_pool, as_stage, PathChoice

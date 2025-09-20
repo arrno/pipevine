@@ -1,5 +1,5 @@
 include README.md
 include LICENSE
-graft parllel/src/parllel
+graft pipevine/src/pipevine
 global-exclude __pycache__
 global-exclude *.py[co]

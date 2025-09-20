@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test runner script for parllel library.
+Test runner script for pipevine library.
 
 Usage:
     python run_tests.py                    # Run all tests

@@ -8,10 +8,10 @@ from typing import Any
 
 import pytest
 
-from parllel.async_util import SENTINEL
-from parllel.stage import work_pool
-from parllel.worker import mp_worker, worker, worker_no_buf
-from parllel.worker_state import WorkerHandler, WorkerState
+from pipevine.async_util import SENTINEL
+from pipevine.stage import work_pool
+from pipevine.worker import mp_worker, worker, worker_no_buf
+from pipevine.worker_state import WorkerHandler, WorkerState
 
 class TestWorkerStatePersistence:
     """Test WorkerState persistence across multiple handler calls."""

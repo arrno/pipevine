@@ -7,10 +7,10 @@ from typing import Any, Dict, List, Callable, Generator
 
 import pytest
 
-from parllel.pipeline import Pipeline
-from parllel.stage import as_stage, mix_pool, work_pool
-from parllel.util import is_ok
-from parllel.worker_state import WorkerState
+from pipevine.pipeline import Pipeline
+from pipevine.stage import as_stage, mix_pool, work_pool
+from pipevine.util import is_ok
+from pipevine.worker_state import WorkerState
 
 class TestBasicPipelineWorkflows:
     """Test common pipeline usage patterns."""
