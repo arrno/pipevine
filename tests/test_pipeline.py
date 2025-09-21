@@ -566,6 +566,40 @@ class TestPipelineChaining:
         assert len(pipeline.stages) == 3
 
     @pytest.mark.asyncio
+    async def test_pipeline_iter(self) -> None:
+        """Test mixing method chaining stages and pipelines."""
+
+        results = []
+        
+        @work_pool()
+        def stage1(x: int, state: WorkerState) -> int:
+            return x + 1
+        
+        @work_pool()
+        def stage2(x: int, state: WorkerState) -> int:  
+            return x * 2
+        
+        @work_pool()
+        def stage3(x: int, state: WorkerState) -> int:
+            return x + 10
+        
+        data = [1, 2, 3]
+        expected = [14, 16, 18]
+
+        pipe = (
+            Pipeline(iter(data)) >>
+            stage1 >>
+            stage2 >>
+            stage3
+        )
+        
+        for item in pipe.iter():
+            results.append(item)
+
+        assert results == expected
+
+
+    @pytest.mark.asyncio
     async def test_chaining_pipelines(self) -> None:
         """Test mixing method chaining stages and pipelines."""
 

@@ -42,8 +42,21 @@ async def validate_data(item, state):
     return item
 
 # Create and run pipeline
-pipeline = Pipeline(range(100)) >> process_data >> validate_data
-result = await pipeline.run()
+pipe = Pipeline(range(100)) >> process_data >> validate_data
+result = await pipe.run()
+```
+
+or run pipeline as an iterator
+
+```python
+pipe = (
+    Pipeline(range(100)) >>
+    process_data >>
+    validate_date
+)
+
+for item in pipe.iter():
+    print(item)
 ```
 
 ## Core Concepts
@@ -106,19 +119,25 @@ def analysis_stage():
 #### Method Chaining
 
 ```python
-pipeline = (Pipeline(data_source)
+pipe = (Pipeline(data_source)
     .stage(preprocessing_stage)
     .stage(analysis_stage)
     .stage(output_stage))
 
-result = await pipeline.run()
+result = await pipe.run()
 ```
 
 #### Operator Overloading
 
 ```python
-pipeline = Pipeline(data_source) >> preprocessing >> analysis >> output
-result = await pipeline.run()
+pipe = (
+    Pipeline(data_source) >>
+    preprocessing >>
+    analysis >>
+    output
+)
+
+result = await pipe.run()
 ```
 
 ## Configuration Options
@@ -213,12 +232,12 @@ async def store(enriched_item, state):
 async def main():
     data_sources = ["file1.json", "file2.json", "api_endpoint"]
 
-    pipeline = (Pipeline(data_sources)
+    pipe = (Pipeline(data_sources)
         .stage(ingest)
         .stage(analyze)
         .stage(store))
 
-    result = await pipeline.run()
+    result = await pipe.run()
     return result
 
 if __name__ == "__main__":
@@ -267,8 +286,8 @@ async def might_fail(item, state):
     return item * 2
 
 # Pipeline automatically handles errors and retries
-pipeline = Pipeline(data) >> might_fail
-result = await pipeline.run()
+pipe = Pipeline(data) >> might_fail
+result = await pipe.run()
 
 if is_err(result):
     print(f"Pipeline failed: {result}")

@@ -22,7 +22,7 @@ class Pipeline:
         self.stages: list[Stage] = []
         self.result: Result = "ok"
         if isinstance(gen, Pipeline):
-            self.gen(gen.as_iterator())
+            self.gen(gen.iter())
             return
         self.gen(gen)
 
@@ -32,7 +32,7 @@ class Pipeline:
     
     def stage(self, st: Stage | Pipeline) -> Pipeline:
         if isinstance(st, Pipeline):
-            st.gen(self.as_iterator())
+            st.gen(self.iter())
             return st
         if len(st.functions) > 0:
             self.stages.append(st)
@@ -111,7 +111,7 @@ class Pipeline:
             if val is SENTINEL:
                 break
 
-    def as_iterator(self, max_buffer: int = 64) -> Iterator[Any]:
+    def iter(self, max_buffer: int = 64) -> Iterator[Any]:
         q: queue.Queue = queue.Queue(maxsize=max_buffer)
         done = object()  # end-of-iteration marker distinct from SENTINEL
         exception_holder: list[BaseException] = []
@@ -120,9 +120,9 @@ class Pipeline:
             try:
                 async for item in self.as_async_generator():
                     # Push each item; if back-pressured, this awaits on the sync side.
-                    q.put(item)
                     if item is SENTINEL:
                         break
+                    q.put(item)
             except BaseException as e:  # capture and deliver exceptions to sync side
                 exception_holder.append(e)
             finally:
