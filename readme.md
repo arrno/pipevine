@@ -70,10 +70,6 @@ All stage functions must conform to the **WorkerHandler protocol**, which requir
 -   `item`: The data to process
 -   `state`: A `WorkerState` instance for maintaining persistent state across handler calls
 
-### WorkerState
-
-The `WorkerState` allows worker functions to maintain persistent state that survives across multiple item processing calls. This is especially useful for scenarios where state cannot cross multi-process boundaries, such as maintaining database connections, HTTP clients, or caches.
-
 #### Work Pool (`@work_pool`)
 
 Creates a stage with multiple identical workers processing items from a shared queue:
@@ -113,6 +109,10 @@ def analysis_stage():
         classify_topic
     ]
 ```
+
+### WorkerState
+
+The `WorkerState` allows worker functions to maintain persistent state that survives across multiple item processing calls. This is especially useful for scenarios where state cannot cross multi-process boundaries, such as maintaining database connections, HTTP clients, or caches.
 
 ### Pipeline Composition
 
