@@ -1,7 +1,7 @@
 """Tests for pipeline module - Pipeline class and composition."""
 
 import asyncio
-from typing import Any, Iterator, Generator, Callable
+from typing import Any, Iterator, Generator, Callable, AsyncIterator
 from unittest.mock import patch
 
 import pytest
@@ -130,6 +130,19 @@ class TestPipelineExecution:
         
         result = await pipeline.run()
         
+        assert is_ok(result)
+
+    @pytest.mark.asyncio
+    async def test_pipeline_accepts_async_iterator(self) -> None:
+        async def async_source() -> AsyncIterator[int]:
+            for value in [1, 2, 3]:
+                yield value
+
+        pipeline = Pipeline(async_source())
+        pipeline.log = False
+
+        result = await pipeline.run()
+
         assert is_ok(result)
     
     @pytest.mark.asyncio

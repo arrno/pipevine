@@ -4,6 +4,7 @@ import queue
 import asyncio
 from threading import Thread
 from asyncio import Queue, shield
+from collections.abc import AsyncIterator as AsyncIteratorABC, Iterator as IteratorABC
 from typing import Any, Iterator, AsyncIterator
 
 from .async_util import SENTINEL
@@ -16,17 +17,19 @@ class Pipeline:
     async pipeline
     '''
 
-    def __init__(self, gen: Iterator[Any] | Pipeline, log: bool = False) -> None:
+    def __init__(self, gen: Iterator[Any] | AsyncIterator[Any] | Pipeline, log: bool = False) -> None:
         self.log = log
-        self.generator: Iterator[Any] | None = None
+        self.generator: Iterator[Any] | AsyncIterator[Any] | None = None
         self.stages: list[Stage] = []
         self.result: Result = "ok"
+        
         if isinstance(gen, Pipeline):
             self.gen(gen.iter())
             return
+        
         self.gen(gen)
 
-    def gen(self, gen: Iterator[Any]) -> Pipeline:
+    def gen(self, gen: Iterator[Any] | AsyncIterator[Any]) -> Pipeline:
         self.generator = gen
         return self
     
@@ -41,17 +44,27 @@ class Pipeline:
     def __rshift__(self, other: Stage | Pipeline) -> Pipeline:
         return self.stage(other)
 
-    def __generate(self, gen: Iterator[Any]) -> asyncio.Queue[Any]:
+    def __generate(self, gen: Iterator[Any] | AsyncIterator[Any]) -> asyncio.Queue[Any]:
         outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
 
         async def run() -> None:
             try:
-                for result in gen:
-                    if is_err(result):
-                        self.__handle_err(str(result))
-                        self.__handle_log(result)
-                        return                        # sentinel sent in finally
-                    await outbound.put(unwrap(result))
+                if isinstance(gen, AsyncIteratorABC):
+                    async for result in gen:
+                        if is_err(result):
+                            self.__handle_err(str(result))
+                            self.__handle_log(result)
+                            return                        # sentinel sent in finally
+                        await outbound.put(unwrap(result))
+                elif isinstance(gen, IteratorABC):
+                    for result in gen:
+                        if is_err(result):
+                            self.__handle_err(str(result))
+                            self.__handle_log(result)
+                            return                        # sentinel sent in finally
+                        await outbound.put(unwrap(result))
+                else:
+                    raise TypeError("Pipeline source must be Iterator or AsyncIterator")
             except asyncio.CancelledError:
                 # allow task cancellation to propagate; finally still runs
                 raise
