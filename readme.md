@@ -272,6 +272,10 @@ result = await (
 ).run()
 ```
 
+### Demo
+
+[👉 Full demo with benchmarks here](https://github.com/arrno/pipevine-demo)
+
 ## Error Handling
 
 Pipevine uses Result types for robust error handling:
@@ -304,10 +308,6 @@ else:
 3. **Multiprocessing**: Use `multi_proc=True` for CPU-intensive tasks, `multi_proc=False` for I/O-bound tasks.
 
 4. **Backpressure**: Smaller buffers provide better backpressure control but may reduce throughput.
-
-## Demo
-
-[👉 Full demo with benchmarks here](https://github.com/arrno/pipevine-demo)
 
 ## Requirements
 
