@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from asyncio import Queue
+from asyncio import Queue, Task
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any, Callable, Optional, TypeAlias, TypeVar
+from multiprocessing.process import BaseProcess
 
 from .async_util import (
     SENTINEL,
@@ -45,7 +46,13 @@ class Stage:
     _choose: PathChoice = PathChoice.One
     log: bool = False
 
-    def run(self, inbound: Queue) -> Queue:
+    def run(
+        self,
+        inbound: Queue,
+        *,
+        register_task: Callable[[Task[Any]], None] | None = None,
+        register_process: Callable[[BaseProcess], None] | None = None,
+    ) -> Queue:
         """
         Public contract: accept and return Queue.
         """
@@ -60,23 +67,48 @@ class Stage:
                 # ---- ASYNC workers ----
                 if self._choose is PathChoice.One:
                     shared_in = await make_shared_inbound_for_pool(
-                        inbound, n_workers=len(self.functions), maxsize=self.buffer
+                        inbound,
+                        n_workers=len(self.functions),
+                        maxsize=self.buffer,
+                        register_task=register_task,
                     )
                     outqs = [
-                        worker(fn, 1, self.retries, shared_in, self.log) 
+                        worker(
+                            fn,
+                            1,
+                            self.retries,
+                            shared_in,
+                            self.log,
+                            register_task=register_task,
+                        ) 
                         for fn in self.functions
                     ]
 
-                    muxed = multiplex_async_queues(outqs)
+                    muxed = multiplex_async_queues(outqs, register_task=register_task)
                 else:  # PathType.All
                     sizes = _split_buffer_across(len(self.functions), self.buffer)
-                    per_ins = await make_broadcast_inbounds(inbound, sizes=sizes)
+                    per_ins = await make_broadcast_inbounds(
+                        inbound,
+                        sizes=sizes,
+                        register_task=register_task,
+                    )
                     outqs = [
-                        worker(fn, 1, self.retries, q_in, self.log) 
+                        worker(
+                            fn,
+                            1,
+                            self.retries,
+                            q_in,
+                            self.log,
+                            register_task=register_task,
+                        ) 
                         for fn, q_in in zip(self.functions, per_ins)
                     ]
 
-                    muxed = multiplex_and_merge_async_queues(outqs, merge)
+                    muxed = multiplex_and_merge_async_queues(
+                        outqs,
+                        merge,
+                        register_task=register_task,
+                    )
 
             else:
                 outqs_async: list[Queue] = []
@@ -84,16 +116,20 @@ class Stage:
                 # ---- MP workers ----
                 if self._choose is PathChoice.One:
                     shared_in = await make_shared_inbound_for_pool(
-                        inbound, n_workers=len(self.functions), maxsize=self.buffer
+                        inbound,
+                        n_workers=len(self.functions),
+                        maxsize=self.buffer,
+                        register_task=register_task,
                     )
                     mp_in = await async_to_mp_queue_with_ready(
                         shared_in,
                         ctx_method=ctx_method,
                         sentinel_count=len(self.functions),
+                        register_task=register_task,
                     )
 
                     for fn in self.functions:
-                        mp_out, _proc = mp_worker(
+                        mp_out, proc = mp_worker(
                             fn,
                             1,
                             self.retries,
@@ -101,20 +137,27 @@ class Stage:
                             ctx_method=ctx_method,
                             log=self.log,
                         )
+                        if register_process:
+                            register_process(proc)
                         outqs_async.append(mp_to_async_queue(mp_out))
 
-                    muxed = multiplex_async_queues(outqs_async)
+                    muxed = multiplex_async_queues(outqs_async, register_task=register_task)
 
                 else:  # PathType.All
                     sizes = _split_buffer_across(len(self.functions), self.buffer)
-                    per_ins = await make_broadcast_inbounds(inbound, sizes=sizes)
+                    per_ins = await make_broadcast_inbounds(
+                        inbound,
+                        sizes=sizes,
+                        register_task=register_task,
+                    )
                     
                     for fn, q_in in zip(self.functions, per_ins):
                         mp_in = await async_to_mp_queue_with_ready(
                             q_in,
                             ctx_method=ctx_method,
+                            register_task=register_task,
                         )
-                        mp_out, _proc = mp_worker(
+                        mp_out, proc = mp_worker(
                             fn,
                             1,
                             self.retries,
@@ -122,9 +165,15 @@ class Stage:
                             ctx_method=ctx_method,
                             log=self.log,
                         )
+                        if register_process:
+                            register_process(proc)
                         outqs_async.append(mp_to_async_queue(mp_out))
 
-                    muxed = multiplex_and_merge_async_queues(outqs_async, merge)
+                    muxed = multiplex_and_merge_async_queues(
+                        outqs_async,
+                        merge,
+                        register_task=register_task,
+                    )
 
             # pipe muxed -> outbound
             while True:
@@ -133,7 +182,9 @@ class Stage:
                 if item is SENTINEL:
                     break
 
-        asyncio.create_task(_run_async())
+        task = asyncio.create_task(_run_async())
+        if register_task:
+            register_task(task)
         return outbound
     
     async def close(self) -> bool:

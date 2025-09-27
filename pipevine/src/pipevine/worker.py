@@ -4,11 +4,11 @@ import pickle
 import asyncio
 import logging
 import multiprocessing as mp
-from asyncio import Queue, shield
+from asyncio import Queue, shield, Task
 from collections import deque
 from multiprocessing import Queue as MPQueue, get_all_start_methods
 from multiprocessing.process import BaseProcess
-from typing import Any, Sequence, Tuple, TypeVar
+from typing import Any, Callable, Sequence, Tuple, TypeVar
 
 from .async_util import SENTINEL
 from .util import is_ok, unwrap, with_retry, get_err
@@ -23,6 +23,8 @@ def worker_no_buf(
     retries: int,
     inbound: Queue[Any],
     log: bool = False,
+    *,
+    register_task: Callable[[Task[Any]], None] | None = None,
 ) -> Queue[Any]: 
     
     outbound: Queue = Queue(1)
@@ -45,7 +47,9 @@ def worker_no_buf(
         finally:
             await shield(outbound.put(SENTINEL))
 
-    asyncio.create_task(run())
+    task = asyncio.create_task(run())
+    if register_task:
+        register_task(task)
     return outbound
 
 # async wrapper
@@ -54,11 +58,19 @@ def worker(
     buf_size: int, 
     retries: int,
     inbound: Queue[Any],
-    log: bool = False
+    log: bool = False,
+    *,
+    register_task: Callable[[Task[Any]], None] | None = None,
 ) -> Queue[Any]:
     
     if buf_size <= 0:
-        return worker_no_buf(f, retries, inbound)
+        return worker_no_buf(
+            f,
+            retries,
+            inbound,
+            log,
+            register_task=register_task,
+        )
     
     outbound: Queue = Queue(1)
     handler = with_retry(retries)(f)
@@ -98,8 +110,11 @@ def worker(
         finally: 
             await shield(outbound.put(SENTINEL))
 
-    asyncio.create_task(buff())
-    asyncio.create_task(run())
+    buff_task = asyncio.create_task(buff())
+    run_task = asyncio.create_task(run())
+    if register_task:
+        register_task(buff_task)
+        register_task(run_task)
     return outbound
 
 

@@ -40,7 +40,12 @@ def mp_to_async_queue(mpq: multiprocessing.Queue, *, loop: Optional[asyncio.Abst
 
 
 # ---- Async -> MP bridge ----
-def async_to_mp_queue(aq: asyncio.Queue, *, ctx_method: str = "spawn") -> multiprocessing.Queue:
+def async_to_mp_queue(
+    aq: asyncio.Queue,
+    *,
+    ctx_method: str = "spawn",
+    register_task: Callable[[asyncio.Task[Any]], None] | None = None,
+) -> multiprocessing.Queue:
     """
     Returns a new MPQueue and starts an async task that forwards from aq -> mpq.
     Stops when SENTINEL is seen (and forwards it).
@@ -62,7 +67,9 @@ def async_to_mp_queue(aq: asyncio.Queue, *, ctx_method: str = "spawn") -> multip
         except Exception:
             mpq.put(SENTINEL)
 
-    asyncio.create_task(_pump())
+    task = asyncio.create_task(_pump())
+    if register_task:
+        register_task(task)
     return mpq
 
 async def async_to_mp_queue_with_ready(
@@ -70,6 +77,7 @@ async def async_to_mp_queue_with_ready(
     *,
     ctx_method: str = "spawn",
     sentinel_count: Optional[int] = 1,
+    register_task: Callable[[asyncio.Task[Any]], None] | None = None,
 ) -> multiprocessing.Queue:
     """
     Returns a new MPQueue and starts an async task that forwards from aq -> mpq.
@@ -93,13 +101,19 @@ async def async_to_mp_queue_with_ready(
         except Exception:
             mpq.put(SENTINEL)
 
-    asyncio.create_task(_pump())
+    task = asyncio.create_task(_pump())
+    if register_task:
+        register_task(task)
     await ready.wait()  # Wait for pump to start
     return mpq
 
 from typing import Any
 
-async def _multiplex_async_queues_task(queues: list[asyncio.Queue]) -> asyncio.Queue:
+async def _multiplex_async_queues_task(
+    queues: list[asyncio.Queue],
+    *,
+    register_task: Callable[[asyncio.Task[Any]], None] | None = None,
+) -> asyncio.Queue:
     if not queues:
         return asyncio.Queue(maxsize=1)
     if len(queues) == 1:
@@ -136,7 +150,9 @@ async def _multiplex_async_queues_task(queues: list[asyncio.Queue]) -> asyncio.Q
         # All forwarders done => close downstream
         await outbound.put(SENTINEL)
 
-    asyncio.create_task(supervisor())
+    task = asyncio.create_task(supervisor())
+    if register_task:
+        register_task(task)
     return outbound
 
 async def _multiplex_and_merge_async_queues_task(
@@ -144,6 +160,7 @@ async def _multiplex_and_merge_async_queues_task(
     merge: Callable[[list[Any]], Any],
     *,
     outbound_maxsize: int = 1,
+    register_task: Callable[[asyncio.Task[Any]], None] | None = None,
 ) -> asyncio.Queue:
     """
     Barrier-synchronize across all queues:
@@ -199,30 +216,15 @@ async def _multiplex_and_merge_async_queues_task(
         finally:
             await outbound.put(SENTINEL)
 
-    asyncio.create_task(supervisor())
+    task = asyncio.create_task(supervisor())
+    if register_task:
+        register_task(task)
     return outbound
 
-def multiplex_async_queues(queues: list[asyncio.Queue]) -> asyncio.Queue:
-    """
-    Synchronous wrapper that schedules the multiplexer and returns the outbound queue immediately.
-    """
-    outbound: asyncio.Queue = asyncio.Queue(maxsize=1)
-
-    async def _runner() -> None:
-        muxed = await _multiplex_async_queues_task(queues)
-        # Pipe muxed -> outbound
-        while True:
-            item = await muxed.get()
-            await outbound.put(item)
-            if item is SENTINEL:
-                break
-
-    asyncio.create_task(_runner())
-    return outbound
-
-def multiplex_and_merge_async_queues(
+def multiplex_async_queues(
     queues: list[asyncio.Queue],
-    merge: Callable[[list[Any]], Any],
+    *,
+    register_task: Callable[[asyncio.Task[Any]], None] | None = None,
 ) -> asyncio.Queue:
     """
     Synchronous wrapper that schedules the multiplexer and returns the outbound queue immediately.
@@ -230,7 +232,10 @@ def multiplex_and_merge_async_queues(
     outbound: asyncio.Queue = asyncio.Queue(maxsize=1)
 
     async def _runner() -> None:
-        muxed = await _multiplex_and_merge_async_queues_task(queues, merge)
+        muxed = await _multiplex_async_queues_task(
+            queues,
+            register_task=register_task,
+        )
         # Pipe muxed -> outbound
         while True:
             item = await muxed.get()
@@ -238,7 +243,38 @@ def multiplex_and_merge_async_queues(
             if item is SENTINEL:
                 break
 
-    asyncio.create_task(_runner())
+    task = asyncio.create_task(_runner())
+    if register_task:
+        register_task(task)
+    return outbound
+
+def multiplex_and_merge_async_queues(
+    queues: list[asyncio.Queue],
+    merge: Callable[[list[Any]], Any],
+    *,
+    register_task: Callable[[asyncio.Task[Any]], None] | None = None,
+) -> asyncio.Queue:
+    """
+    Synchronous wrapper that schedules the multiplexer and returns the outbound queue immediately.
+    """
+    outbound: asyncio.Queue = asyncio.Queue(maxsize=1)
+
+    async def _runner() -> None:
+        muxed = await _multiplex_and_merge_async_queues_task(
+            queues,
+            merge,
+            register_task=register_task,
+        )
+        # Pipe muxed -> outbound
+        while True:
+            item = await muxed.get()
+            await outbound.put(item)
+            if item is SENTINEL:
+                break
+
+    task = asyncio.create_task(_runner())
+    if register_task:
+        register_task(task)
     return outbound
 
 async def make_shared_inbound_for_pool(
@@ -246,6 +282,7 @@ async def make_shared_inbound_for_pool(
     *,
     n_workers: int,
     maxsize: int = 1,
+    register_task: Callable[[asyncio.Task[Any]], None] | None = None,
 ) -> asyncio.Queue:
     """
     Drain 'upstream' into a new shared inbound queue that multiple workers read from.
@@ -264,13 +301,16 @@ async def make_shared_inbound_for_pool(
             for _ in range(n_workers):
                 await shared.put(SENTINEL)
 
-    asyncio.create_task(pump())
+    task = asyncio.create_task(pump())
+    if register_task:
+        register_task(task)
     return shared
 
 async def make_broadcast_inbounds(
     upstream: asyncio.Queue,
     *,
     sizes: list[int],
+    register_task: Callable[[asyncio.Task[Any]], None] | None = None,
 ) -> list[asyncio.Queue]:
     """
     Create N per-worker queues. Every upstream item is put onto all N queues.
@@ -289,5 +329,7 @@ async def make_broadcast_inbounds(
         finally:
             await asyncio.gather(*(q.put(SENTINEL) for q in outs))
 
-    asyncio.create_task(pump())
+    task = asyncio.create_task(pump())
+    if register_task:
+        register_task(task)
     return outs
