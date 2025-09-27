@@ -1,0 +1,36 @@
+▌ how will the workers see the cancel_event.is_set()? are we just going to pass that info all the way down from the pipeline to the process/coroutine? or do we need to
+▌ expand worker to be an object with state? or even merge worker/stage into one thing? What do you think?
+
+> I’d keep the existing Stage/worker separation. The plan is to let Pipeline own a PipelineRuntime (with the cancel_event) and hand lightweight handles downwards:
+
+  - When Pipeline builds stages it passes a small RuntimeHandle (basically event, register_task, register_process, cancel_reason). Stage.run just stores it and forwards
+  event to the helper functions that already spawn tasks.
+  - For async workers we can tuck the cancel_event into the closure created inside worker()/worker_no_buf; every loop already has natural checkpoints after get() and
+  before put(), so there’s no need to reify workers as classes.
+  - Multiprocess workers can’t share the event, so Stage.run injects an extra sentinel-producing pump when cancellation is requested. _mp_task just exits when it sees
+  that sentinel; again no refactor of worker vs. stage.
+  - WorkerState can optionally expose state.cancelled if we want handlers to be aware, but that’s additive.
+
+  So, no merging Stage/worker. We just thread a slim runtime reference (not the whole Pipeline) down the call chain via existing factory functions; stateful objects
+  aren’t required.
+
+  ▌ if on cancel, everything stops reading from upstream and starts sending SENTINEL downstream, will those actions negate eachother? or am I misunderstanding the proposed
+▌ process?
+
+• I'm outlining how cancellation stops upstream reading while carefully injecting a sentinel downstream to signal termination without causing deadlocks or double
+  signals; this involves draining queues appropriately so consumers see the sentinel after outstanding items, ensuring clean task shutdown across pipeline stages.
+
+> Good instincts—there’s a sequencing nuance here. “Stop reading” and “send sentinels” have to be coordinated so they don’t cancel each other out. In the plan, the
+  cancel flow looks like this:
+
+  - Pipeline.cancel() flips the shared cancel_event; everyone that periodically checks it knows teardown has started.
+  - Upstream pumps (the source iterator task plus the helper pumps in async_util) stop pulling new items once they see the event, so we don’t keep ingesting work that
+  will just be dropped.
+  - Before those pumps exit they still push the required SENTINELs into their downstream queues. That’s important: even if the upstream queue still holds older items,
+  appending one sentinel per consumer ensures those consumers wake up, drain what remains, and then terminate.
+  - Workers follow the same pattern: after get() they check the event. If set they discard the in-flight item, push a single sentinel downstream, and break. That means
+  existing buffered items either get processed if they were already dequeued, or, if they’re still sitting in the queue after we injected sentinels, they simply won’t be
+  read because the sentinel unblocks the reader first. Either way, you won’t deadlock because the sentinel is always delivered.
+
+  So, the actions don’t negate each other. The cancellation check just prevents new pulls; the sentinel injection is how we guarantee every queue in the chain delivers a
+  terminal signal so consumers can exit.
