@@ -305,6 +305,10 @@ else:
 
 4. **Backpressure**: Smaller buffers provide better backpressure control but may reduce throughput.
 
+## Demo
+
+[👉 Full demo with benchmarks here](https://github.com/arrno/pipevine-demo)
+
 ## Requirements
 
 -   Python 3.10+
