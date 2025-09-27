@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import queue
 import asyncio
+import logging
 from threading import Thread
 from asyncio import Queue, shield
 from collections.abc import AsyncIterator as AsyncIteratorABC, Iterator as IteratorABC
@@ -10,6 +11,8 @@ from typing import Any, Iterator, AsyncIterator
 from .async_util import SENTINEL
 from .stage import Stage
 from .util import Err, Result, is_err, unwrap
+
+logger = logging.getLogger(__name__)
 
 class Pipeline:
     
@@ -34,6 +37,7 @@ class Pipeline:
         return self
     
     def stage(self, st: Stage | Pipeline) -> Pipeline:
+        st.log = self.log
         if isinstance(st, Pipeline):
             st.gen(self.iter())
             return st
@@ -84,7 +88,7 @@ class Pipeline:
     
     def __handle_log(self, val: Any) -> None:
         if self.log:
-            print(val)
+            logger.info(val)
     
     def __handle_err(self, err: str) -> None:
         self.result = Err(err)

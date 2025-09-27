@@ -284,7 +284,7 @@ class TestPipelineErrorHandling:
         pipeline = Pipeline(iter(data)) >> identity
         pipeline.log = True
         
-        with patch('builtins.print') as mock_print:
+        with patch('pipevine.pipeline.logger.info') as mock_print:
             result = await pipeline.run()
             
         # Should have printed the output items

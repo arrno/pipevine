@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import asyncio
-import multiprocessing as mp
 import pickle
+import asyncio
+import logging
+import multiprocessing as mp
 from asyncio import Queue, shield
 from collections import deque
 from multiprocessing import Queue as MPQueue, get_all_start_methods
@@ -10,15 +11,18 @@ from multiprocessing.process import BaseProcess
 from typing import Any, Sequence, Tuple, TypeVar
 
 from .async_util import SENTINEL
-from .util import is_ok, unwrap, with_retry
+from .util import is_ok, unwrap, with_retry, get_err
 from .worker_state import WorkerHandler, WorkerState
 
 T = TypeVar("T")
+
+logger = logging.getLogger(__name__)
 
 def worker_no_buf(
     f: WorkerHandler, 
     retries: int,
     inbound: Queue[Any],
+    log: bool = False,
 ) -> Queue[Any]: 
     
     outbound: Queue = Queue(1)
@@ -35,6 +39,7 @@ def worker_no_buf(
                 if asyncio.iscoroutine(result):
                     result = await result
                 if not is_ok(result):
+                    if log: logger.warning(result)
                     continue
                 await outbound.put(unwrap(result))
         finally:
@@ -49,6 +54,7 @@ def worker(
     buf_size: int, 
     retries: int,
     inbound: Queue[Any],
+    log: bool = False
 ) -> Queue[Any]:
     
     if buf_size <= 0:
@@ -83,6 +89,7 @@ def worker(
                 if asyncio.iscoroutine(result):
                     result = await result
                 if not is_ok(result):
+                    if log: logger.warning(result)
                     continue
                 await outbound.put(unwrap(result))
 
@@ -119,7 +126,14 @@ def _choose_ctx_method(
     return methods[0] if methods else "spawn"
 
 
-def _mp_task(f: WorkerHandler, inbound: MPQueue, outbound: MPQueue, retries: int, buf_size: int) -> None:
+def _mp_task(
+    f: WorkerHandler, 
+    inbound: MPQueue, 
+    outbound: MPQueue, 
+    retries: int, 
+    buf_size: int, 
+    log: bool = False,
+) -> None:
     from queue import Empty
     handler = with_retry(retries)(f)
 
@@ -156,6 +170,7 @@ def _mp_task(f: WorkerHandler, inbound: MPQueue, outbound: MPQueue, retries: int
             # Note: mp_worker runs in separate process, can't await async functions
             # async functions should be wrapped or converted to sync before mp_worker
             if not is_ok(result):
+                if log: logger.warning(result)
                 continue
             outbound.put(unwrap(result))
 
@@ -171,6 +186,7 @@ def mp_worker(
     inbound: MPQueue,
     *,
     ctx_method: str | None = None,
+    log: bool = False,
 ) -> Tuple[MPQueue, BaseProcess]:
 
     method = _choose_ctx_method((f,), ctx_method)
@@ -181,7 +197,7 @@ def mp_worker(
     process_factory = getattr(ctx, "Process")
     proc = process_factory(
         target=_mp_task,
-        args=(f, inbound, outbound, retries, buf_size),
+        args=(f, inbound, outbound, retries, buf_size, log),
         daemon=True,
     )
     proc.start()

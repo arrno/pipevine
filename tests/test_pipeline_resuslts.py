@@ -21,7 +21,7 @@ def _collect_print_values(mock_print: MagicMock) -> list[Any]:
 
 async def _run_and_collect(pipeline: Pipeline) -> tuple[bool, list[Any]]:
     pipeline.log = True
-    with patch("builtins.print") as mock_print:
+    with patch("pipevine.pipeline.logger.info") as mock_print:
         result = await pipeline.run()
     return is_ok(result), _collect_print_values(mock_print)
 

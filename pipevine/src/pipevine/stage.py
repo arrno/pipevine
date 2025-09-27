@@ -43,6 +43,7 @@ class Stage:
     functions: list[WorkerHandler]
     merge: Optional[Callable[[list[Any]], Any]] = None # TODO
     _choose: PathChoice = PathChoice.One
+    log: bool = False
 
     def run(self, inbound: Queue) -> Queue:
         """
@@ -62,7 +63,7 @@ class Stage:
                         inbound, n_workers=len(self.functions), maxsize=self.buffer
                     )
                     outqs = [
-                        worker(fn, 1, self.retries, shared_in) 
+                        worker(fn, 1, self.retries, shared_in, self.log) 
                         for fn in self.functions
                     ]
 
@@ -71,7 +72,7 @@ class Stage:
                     sizes = _split_buffer_across(len(self.functions), self.buffer)
                     per_ins = await make_broadcast_inbounds(inbound, sizes=sizes)
                     outqs = [
-                        worker(fn, 1, self.retries, q_in) 
+                        worker(fn, 1, self.retries, q_in, self.log) 
                         for fn, q_in in zip(self.functions, per_ins)
                     ]
 
@@ -98,6 +99,7 @@ class Stage:
                             self.retries,
                             mp_in,
                             ctx_method=ctx_method,
+                            log=self.log,
                         )
                         outqs_async.append(mp_to_async_queue(mp_out))
 
@@ -118,6 +120,7 @@ class Stage:
                             self.retries,
                             mp_in,
                             ctx_method=ctx_method,
+                            log=self.log,
                         )
                         outqs_async.append(mp_to_async_queue(mp_out))
 
