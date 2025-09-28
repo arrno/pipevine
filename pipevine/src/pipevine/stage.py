@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import time
 import asyncio
 import contextlib
-from asyncio import Queue, Task, QueueFull, QueueEmpty
-from multiprocessing.process import BaseProcess
 from enum import Enum, auto
+from dataclasses import dataclass
+from multiprocessing.process import BaseProcess
+from asyncio import Queue, Task, QueueFull, QueueEmpty
 from typing import Any, Callable, Optional, TypeAlias, TypeVar
 
 from .async_util import (
@@ -20,14 +22,27 @@ from .util import Err
 from .worker import default_mp_ctx_method, mp_worker, worker
 from .worker_state import WorkerHandler
 
+
 T = TypeVar("T")
 Result: TypeAlias = T | Err
 
+
 StageFunc: TypeAlias = Callable[[Any], Any]
+
 
 class PathChoice(Enum):
     One = auto() # item takes on func path in stage
     All = auto() # item is emitted on every func path in stage
+
+
+@dataclass
+class StageMetrics:
+    start: float = 0
+    stop: float = 0
+    duration: float = 0
+    processed: int = 0
+    failed: int = 0
+
 
 def _split_buffer_across(n: int, total: int) -> list[int]:
     if n <= 0: return []
@@ -36,8 +51,8 @@ def _split_buffer_across(n: int, total: int) -> list[int]:
     sizes = [base + (1 if i < rem else 0) for i in range(n)]
     return sizes
 
-class Stage:
 
+class Stage:
     def __init__(
             self,
             buffer: int,
@@ -59,12 +74,27 @@ class Stage:
         self._processes: set[BaseProcess] = set()
         self._outbound: Queue | None = None
         self._inbound: Queue | None = None
+        self._metrics = StageMetrics()
 
     def _register_task(self, task: Task[Any]) -> None:
         self._tasks.add(task)
         def _cleanup(_: Task[Any]) -> None:
             self._tasks.discard(task)
         task.add_done_callback(_cleanup)
+
+    def _count(self, item: Any) -> None:
+        if hasattr(item, "__len__"):
+            self._metrics.processed += len(item)
+        else:
+            self._metrics.processed += 1
+    
+    def _count_err(self) -> None:
+        # do we need to lock if passing this callback to threads/processes?
+        self._metrics.failed += 1
+
+    @property
+    def metrics(self) -> StageMetrics:
+        return self._metrics
 
     def run(self, inbound: Queue) -> Queue:
         """
@@ -194,6 +224,12 @@ class Stage:
                 await outbound.put(item)
                 if item is SENTINEL:
                     break
+                self._count(item)
+        
+        self._metrics.start = time.time()
+
+        # TODO -> mark stop/duration when task completes.. 
+        # also, pass in _count_err callback to workers
 
         task = asyncio.create_task(_run_async())
         self._register_task(task)

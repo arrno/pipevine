@@ -1,20 +1,31 @@
 from __future__ import annotations
 
-import types
+import time
 import queue
 import asyncio
 import logging
 import contextlib
 from threading import Thread
+from dataclasses import dataclass
 from asyncio import Queue, shield, Task, QueueEmpty, QueueFull
 from collections.abc import AsyncIterator as AsyncIteratorABC, Iterator as IteratorABC
 from typing import Any, Iterator, AsyncIterator, Awaitable, Callable, cast
 
 from .async_util import SENTINEL
-from .stage import Stage
+from .stage import Stage, StageMetrics
 from .util import Err, Result, is_err, unwrap
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PipelineMetrics:
+    start: float = 0
+    stop: float = 0
+    duration: float = 0
+    processed: int = 0
+    failed: int = 0
+    stages: list[StageMetrics] = []
 
 
 class Pipeline:
@@ -32,6 +43,7 @@ class Pipeline:
         self.tasks: set[Task[Any]] = set()
         self._gen_stream: Queue | None = None
         self._parent: Pipeline | None = None
+        self._metrics = PipelineMetrics()
         
         if isinstance(gen, Pipeline):
             self._parent = gen
@@ -94,7 +106,10 @@ class Pipeline:
                     await shield(outbound.put(SENTINEL))
                 except Exception:
                     pass
-
+        
+        self._metrics.start = time.time()
+        # TODO -> record stop/duration when the drain exits
+        
         task = asyncio.create_task(run())
         self.tasks.add(task)
 
@@ -184,6 +199,16 @@ class Pipeline:
             if item is done:
                 return
             yield item 
+
+    def _calculate_metrics(self) -> None:
+        '''
+        TODO -> if done/canceled, get all stage metrics and tally totals
+        '''
+        pass
+    
+    @property
+    def metrics(self) -> PipelineMetrics:
+        return self._metrics
 
     async def cancel(self, reason: str | None = None) -> Result:
         if self.cancel_event.is_set():
