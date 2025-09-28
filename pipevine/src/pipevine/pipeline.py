@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import types
 import queue
 import asyncio
 import logging
+import contextlib
 from threading import Thread
-from asyncio import Queue, shield, Task
+from asyncio import Queue, shield, Task, QueueEmpty, QueueFull
 from collections.abc import AsyncIterator as AsyncIteratorABC, Iterator as IteratorABC
-from typing import Any, Iterator, AsyncIterator
+from typing import Any, Iterator, AsyncIterator, Awaitable, Callable, cast
 
 from .async_util import SENTINEL
 from .stage import Stage
@@ -28,8 +30,11 @@ class Pipeline:
         self.result: Result = "ok"
         self.cancel_event = asyncio.Event()
         self.tasks: set[Task[Any]] = set()
+        self._gen_stream: Queue | None = None
+        self._parent: Pipeline | None = None
         
         if isinstance(gen, Pipeline):
+            self._parent = gen
             self.gen(gen.iter())
             return
         
@@ -38,6 +43,8 @@ class Pipeline:
 
     def gen(self, gen: Iterator[Any] | AsyncIterator[Any]) -> Pipeline:
         self.generator = gen
+        self.cancel_event.clear()
+        self.result = "ok"
         return self
     
     def stage(self, st: Stage | Pipeline) -> Pipeline:
@@ -54,6 +61,7 @@ class Pipeline:
 
     def __generate(self, gen: Iterator[Any] | AsyncIterator[Any]) -> asyncio.Queue[Any]:
         outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
+        self._gen_stream = outbound
 
         async def run() -> None:
             try:
@@ -89,6 +97,11 @@ class Pipeline:
 
         task = asyncio.create_task(run())
         self.tasks.add(task)
+
+        def _discard(_: Task[Any]) -> None:
+            self.tasks.discard(task)
+
+        task.add_done_callback(_discard)
         return outbound
     
     def __handle_log(self, val: Any) -> None:
@@ -172,16 +185,58 @@ class Pipeline:
                 return
             yield item 
 
-    def cancel(self, reason: str) -> Result:
-        '''
-        TODO
-        first, toggle self cancel_event
-        secondly, stop our own generator/tasks
-        then, await the close of all our stages
-        finally, wrap the reason in a cancel message context and set it as our result
-        then return
+    async def cancel(self, reason: str | None = None) -> Result:
+        if self.cancel_event.is_set():
+            return self.result
 
-        ..also, double check self.iter will close gracefully.. we may need to add its
-        tasks to self._tasks
-        '''
+        if reason is None:
+            reason = "pipeline cancelled"
+
+        self.cancel_event.set()
+        self.result = Err(reason)
+        self.__handle_log(reason)
+
+        if self._parent is not None:
+            await self._parent.cancel(reason)
+
+        gen = self.generator
+        if gen is not None:
+            aclose = getattr(gen, "aclose", None)
+            if callable(aclose):
+                aclose_typed = cast(Callable[[], Awaitable[None]], aclose)
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(asyncio.shield(aclose_typed()), 1.0)
+            else:
+                close = getattr(gen, "close", None)
+                if callable(close):
+                    with contextlib.suppress(Exception):
+                        close()
+
+        tasks = list(self.tasks)
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        if self.stages:
+            await asyncio.gather(
+                *(stage.close() for stage in self.stages),
+                return_exceptions=True,
+            )
+
+        # generator task canceled, drain self gen_stream until empty
+        # then send final sentinel for drain
+        if self._gen_stream is not None:
+            while True:
+                try:
+                    self._gen_stream.get_nowait()
+                except QueueEmpty:
+                    break
+                except Exception:
+                    break
+            with contextlib.suppress(QueueFull, Exception):
+                self._gen_stream.put_nowait(SENTINEL)
+            self._gen_stream = None
+
         return self.result

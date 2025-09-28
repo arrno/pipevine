@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 from asyncio import Queue, Task, QueueFull, QueueEmpty
 from multiprocessing.process import BaseProcess
-from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Callable, Optional, TypeAlias, TypeVar
 

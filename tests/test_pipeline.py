@@ -1,6 +1,7 @@
 """Tests for pipeline module - Pipeline class and composition."""
 
 import asyncio
+from asyncio import Event
 from typing import Any, Iterator, Generator, Callable, AsyncIterator
 from unittest.mock import patch
 
@@ -216,7 +217,58 @@ class TestPipelineExecution:
         result = await pipeline.run()
         
         assert is_err(result)
-    
+
+
+class TestPipelineCancellation:
+    """Validate cooperative cancellation behaviour."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_mid_run(self) -> None:
+        data = list(range(50))
+        pause_event = Event()
+
+        @work_pool(buffer=2)
+        async def slow_double(x: int, state: WorkerState) -> int:
+            if x > 10:
+                pause_event.set()
+                await asyncio.sleep(3600)
+            return x * 2
+        
+        pipeline = Pipeline(iter(data)) >> slow_double
+        pipeline.log = False
+
+        run_task = asyncio.create_task(pipeline.run())
+        await pause_event.wait()
+
+        cancel_result = await pipeline.cancel("stop")
+        run_result = await asyncio.wait_for(run_task, timeout=2)
+
+        assert is_err(cancel_result)
+        assert is_err(run_result)
+        assert get_err(run_result) == "stop"
+
+    @pytest.mark.asyncio
+    async def test_cancel_before_run_returns_error(self) -> None:
+        pipeline = Pipeline(iter([1, 2, 3]))
+        err = await pipeline.cancel("early")
+        assert is_err(err)
+
+        result = await pipeline.run()
+        assert is_err(result)
+        assert get_err(result) == "early"
+
+    @pytest.mark.asyncio
+    async def test_reseed_after_cancel(self) -> None:
+        data = [1, 2, 3]
+
+        pipeline = Pipeline(iter(data))
+        await pipeline.cancel("halt")
+
+        pipeline.gen(iter(data))
+
+        result = await pipeline.run()
+        assert is_ok(result)
+
     @pytest.mark.asyncio 
     async def test_pipeline_with_no_stages(self) -> None:
         data = [1, 2, 3, 4, 5]

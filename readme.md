@@ -17,6 +17,8 @@ Think of it as a lighter alternative to frameworks like Celery, giving you **bac
 -   **👥 Flexible worker patterns** via worker pools, branching, and mixed functions
 -   **🔗 Composable pipelines** using method chaining `.stage()` or operator overloading `>>`
 -   **🛡 Error-aware** results with Result types for graceful degradation
+-   **✋ Safe cancellation** with cooperative shutdown, draining in-flight work, and graceful task termination
+-   **🔎 Metrics & visibility** via counters, timers, and hooks for logging/observability systems
 
 ## Installation
 
