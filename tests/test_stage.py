@@ -24,7 +24,7 @@ class TestStageClass:
             multi_proc=False,
             functions=[dummy_func],
             merge=None,
-            _choose=PathChoice.One
+            choose=PathChoice.One
         )
         
         assert stage.buffer == 10
@@ -46,7 +46,7 @@ class TestStageClass:
             multi_proc=False,
             functions=[double],
             merge=None,
-            _choose=PathChoice.One
+            choose=PathChoice.One
         )
         
         # Create input queue
@@ -83,7 +83,7 @@ class TestStageClass:
             multi_proc=False,
             functions=[add_one, multiply_two],
             merge=None,
-            _choose=PathChoice.One
+            choose=PathChoice.One
         )
         
         inbound: Queue =asyncio.Queue(maxsize=5)
@@ -352,7 +352,7 @@ class TestPathChoice:
             multi_proc=False,
             functions=[track_worker(1), track_worker(2)],
             merge=None,
-            _choose=PathChoice.One
+            choose=PathChoice.One
         )
         
         inbound: Queue =asyncio.Queue(maxsize=10)

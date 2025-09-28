@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from asyncio import Queue, Task
-from dataclasses import dataclass
+import contextlib
+from asyncio import Queue, Task, QueueFull, QueueEmpty
+from multiprocessing.process import BaseProcess
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Callable, Optional, TypeAlias, TypeVar
-from multiprocessing.process import BaseProcess
 
 from .async_util import (
     SENTINEL,
@@ -36,29 +37,44 @@ def _split_buffer_across(n: int, total: int) -> list[int]:
     sizes = [base + (1 if i < rem else 0) for i in range(n)]
     return sizes
 
-@dataclass
 class Stage:
-    buffer: int
-    retries: int
-    multi_proc: bool  # True => multiprocessing
-    functions: list[WorkerHandler]
-    merge: Optional[Callable[[list[Any]], Any]] = None # TODO
-    _choose: PathChoice = PathChoice.One
-    log: bool = False
 
-    def run(
-        self,
-        inbound: Queue,
-        *,
-        register_task: Callable[[Task[Any]], None] | None = None,
-        register_process: Callable[[BaseProcess], None] | None = None,
-    ) -> Queue:
+    def __init__(
+            self,
+            buffer: int,
+            retries: int,
+            multi_proc: bool,
+            functions: list[WorkerHandler],
+            merge: Optional[Callable[[list[Any]], Any]] = None,
+            choose: PathChoice = PathChoice.One,
+            log: bool = False,
+        ):
+        self.buffer = buffer
+        self.retries = retries
+        self.multi_proc = multi_proc
+        self.functions = functions
+        self.merge = merge
+        self._choose = choose
+        self.log = log
+        self._tasks: set[Task[Any]] = set()
+        self._processes: set[BaseProcess] = set()
+        self._outbound: Queue | None = None
+        self._inbound: Queue | None = None
+
+    def _register_task(self, task: Task[Any]) -> None:
+        self._tasks.add(task)
+        def _cleanup(_: Task[Any]) -> None:
+            self._tasks.discard(task)
+        task.add_done_callback(_cleanup)
+
+    def run(self, inbound: Queue) -> Queue:
         """
         Public contract: accept and return Queue.
         """
         # return queue now; supervise in background
         outbound: Queue = Queue(maxsize=self.buffer)
-        self.inbound = inbound
+        self._inbound = inbound
+        self._outbound = outbound
 
         async def _run_async() -> None:
             merge = self.merge if self.merge != None else lambda x: x
@@ -70,7 +86,7 @@ class Stage:
                         inbound,
                         n_workers=len(self.functions),
                         maxsize=self.buffer,
-                        register_task=register_task,
+                        register_task=self._register_task,
                     )
                     outqs = [
                         worker(
@@ -79,18 +95,18 @@ class Stage:
                             self.retries,
                             shared_in,
                             self.log,
-                            register_task=register_task,
+                            register_task=self._register_task,
                         ) 
                         for fn in self.functions
                     ]
 
-                    muxed = multiplex_async_queues(outqs, register_task=register_task)
+                    muxed = multiplex_async_queues(outqs, register_task=self._register_task)
                 else:  # PathType.All
                     sizes = _split_buffer_across(len(self.functions), self.buffer)
                     per_ins = await make_broadcast_inbounds(
                         inbound,
                         sizes=sizes,
-                        register_task=register_task,
+                        register_task=self._register_task,
                     )
                     outqs = [
                         worker(
@@ -99,7 +115,7 @@ class Stage:
                             self.retries,
                             q_in,
                             self.log,
-                            register_task=register_task,
+                            register_task=self._register_task,
                         ) 
                         for fn, q_in in zip(self.functions, per_ins)
                     ]
@@ -107,7 +123,7 @@ class Stage:
                     muxed = multiplex_and_merge_async_queues(
                         outqs,
                         merge,
-                        register_task=register_task,
+                        register_task=self._register_task,
                     )
 
             else:
@@ -119,13 +135,13 @@ class Stage:
                         inbound,
                         n_workers=len(self.functions),
                         maxsize=self.buffer,
-                        register_task=register_task,
+                        register_task=self._register_task,
                     )
                     mp_in = await async_to_mp_queue_with_ready(
                         shared_in,
                         ctx_method=ctx_method,
                         sentinel_count=len(self.functions),
-                        register_task=register_task,
+                        register_task=self._register_task,
                     )
 
                     for fn in self.functions:
@@ -137,25 +153,24 @@ class Stage:
                             ctx_method=ctx_method,
                             log=self.log,
                         )
-                        if register_process:
-                            register_process(proc)
+                        self._processes.add(proc)
                         outqs_async.append(mp_to_async_queue(mp_out))
 
-                    muxed = multiplex_async_queues(outqs_async, register_task=register_task)
+                    muxed = multiplex_async_queues(outqs_async, register_task=self._register_task)
 
                 else:  # PathType.All
                     sizes = _split_buffer_across(len(self.functions), self.buffer)
                     per_ins = await make_broadcast_inbounds(
                         inbound,
                         sizes=sizes,
-                        register_task=register_task,
+                        register_task=self._register_task,
                     )
                     
                     for fn, q_in in zip(self.functions, per_ins):
                         mp_in = await async_to_mp_queue_with_ready(
                             q_in,
                             ctx_method=ctx_method,
-                            register_task=register_task,
+                            register_task=self._register_task,
                         )
                         mp_out, proc = mp_worker(
                             fn,
@@ -165,14 +180,13 @@ class Stage:
                             ctx_method=ctx_method,
                             log=self.log,
                         )
-                        if register_process:
-                            register_process(proc)
+                        self._processes.add(proc)
                         outqs_async.append(mp_to_async_queue(mp_out))
 
                     muxed = multiplex_and_merge_async_queues(
                         outqs_async,
                         merge,
-                        register_task=register_task,
+                        register_task=self._register_task,
                     )
 
             # pipe muxed -> outbound
@@ -183,15 +197,58 @@ class Stage:
                     break
 
         task = asyncio.create_task(_run_async())
-        if register_task:
-            register_task(task)
+        self._register_task(task)
         return outbound
-    
+
+    async def _cancel_internals(self) -> None:
+        targets = set(self._tasks)
+
+        for tracked in targets:
+            if not tracked.done():
+                tracked.cancel()
+
+        if targets:
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    asyncio.gather(*targets, return_exceptions=True),
+                    timeout=0.5,
+                )
+        self._tasks.clear()
+
+        for proc in list(self._processes):
+            try:
+                proc.join(timeout=0.1)
+            except Exception:
+                pass
+            if proc.is_alive():
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+                try:
+                    proc.join(timeout=0.1)
+                except Exception:
+                    pass
+        self._processes.clear()
+
     async def close(self) -> bool:
-        if hasattr(self, "inbound"):
-            await self.inbound.put(SENTINEL)
-            return True
-        return False
+        if self._inbound is None:
+            return False
+        
+        await self._cancel_internals()
+
+        if self._outbound is not None:
+            while True:
+                try:
+                    self._outbound.get_nowait()
+                except QueueEmpty:
+                    break
+                except Exception:
+                    break
+            with contextlib.suppress(QueueFull, Exception):
+                self._outbound.put_nowait(SENTINEL)
+
+        return True
     
 def work_pool(
     *,

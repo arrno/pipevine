@@ -3,11 +3,9 @@ from __future__ import annotations
 import queue
 import asyncio
 import logging
-from dataclasses import dataclass, field
 from threading import Thread
 from asyncio import Queue, shield, Task
 from collections.abc import AsyncIterator as AsyncIteratorABC, Iterator as IteratorABC
-from multiprocessing.process import BaseProcess
 from typing import Any, Iterator, AsyncIterator
 
 from .async_util import SENTINEL
@@ -15,24 +13,6 @@ from .stage import Stage
 from .util import Err, Result, is_err, unwrap
 
 logger = logging.getLogger(__name__)
-
-@dataclass
-class _PipelineRuntime:
-    cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
-    reason: str | None = None
-    tasks: set[Task[Any]] = field(default_factory=set)
-    processes: set[BaseProcess] = field(default_factory=set)
-
-    def register_task(self, task: Task[Any]) -> None:
-        self.tasks.add(task)
-
-        def _discard(_: Task[Any]) -> None:
-            self.tasks.discard(task)
-
-        task.add_done_callback(_discard)
-
-    def register_process(self, proc: BaseProcess) -> None:
-        self.processes.add(proc)
 
 
 class Pipeline:
@@ -46,7 +26,8 @@ class Pipeline:
         self.generator: Iterator[Any] | AsyncIterator[Any] | None = None
         self.stages: list[Stage] = []
         self.result: Result = "ok"
-        self._runtime: _PipelineRuntime | None = None
+        self.cancel_event = asyncio.Event()
+        self.tasks: set[Task[Any]] = set()
         
         if isinstance(gen, Pipeline):
             self.gen(gen.iter())
@@ -54,11 +35,6 @@ class Pipeline:
         
         self.gen(gen)
 
-    @property
-    def runtime(self) -> _PipelineRuntime:
-        if self._runtime is None:
-            self._runtime = _PipelineRuntime()
-        return self._runtime
 
     def gen(self, gen: Iterator[Any] | AsyncIterator[Any]) -> Pipeline:
         self.generator = gen
@@ -76,13 +52,7 @@ class Pipeline:
     def __rshift__(self, other: Stage | Pipeline) -> Pipeline:
         return self.stage(other)
 
-    def __generate(
-        self,
-        gen: Iterator[Any] | AsyncIterator[Any],
-        *,
-        runtime: _PipelineRuntime | None = None,
-    ) -> asyncio.Queue[Any]:
-        runtime = runtime or self.runtime
+    def __generate(self, gen: Iterator[Any] | AsyncIterator[Any]) -> asyncio.Queue[Any]:
         outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
 
         async def run() -> None:
@@ -118,7 +88,7 @@ class Pipeline:
                     pass
 
         task = asyncio.create_task(run())
-        runtime.register_task(task)
+        self.tasks.add(task)
         return outbound
     
     def __handle_log(self, val: Any) -> None:
@@ -136,36 +106,27 @@ class Pipeline:
             self.__handle_log(val)
             
     async def run(self) -> Result:
-
-        runtime = self.runtime
+        if self.cancel_event.is_set():
+            return self.result
         if not self.generator:
             err = Err("no generator")
             self.__handle_err(err.message)
             self.__handle_log(err.message)
             return err
         
-        stream = self.__generate(self.generator, runtime=runtime)
+        stream = self.__generate(self.generator)
         for stage in self.stages:
-            stream = stage.run(
-                stream,
-                register_task=runtime.register_task,
-                register_process=runtime.register_process,
-            )
+            stream = stage.run(stream)
         await self.__drain(stream)
         return self.result
     
     async def as_async_generator(self) -> AsyncIterator:
-        runtime = self.runtime
         if not self.generator:
             raise RuntimeError("Pipeline.as_async_generator needs a self.generator")
 
-        stream = self.__generate(self.generator, runtime=runtime)
+        stream = self.__generate(self.generator)
         for stage in self.stages:
-            stream = stage.run(
-                stream,
-                register_task=runtime.register_task,
-                register_process=runtime.register_process,
-            )
+            stream = stage.run(stream)
 
         while True:
             val = await stream.get()
@@ -210,3 +171,17 @@ class Pipeline:
             if item is done:
                 return
             yield item 
+
+    def cancel(self, reason: str) -> Result:
+        '''
+        TODO
+        first, toggle self cancel_event
+        secondly, stop our own generator/tasks
+        then, await the close of all our stages
+        finally, wrap the reason in a cancel message context and set it as our result
+        then return
+
+        ..also, double check self.iter will close gracefully.. we may need to add its
+        tasks to self._tasks
+        '''
+        return self.result
