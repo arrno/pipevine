@@ -9,7 +9,7 @@ import pytest
 
 from pipevine.async_util import SENTINEL
 from pipevine.pipeline import Pipeline
-from pipevine.stage import Stage, mix_pool, work_pool
+from pipevine.stage import Stage, mix_pool, work_pool, KillSwitch
 from pipevine.util import Err, get_err, is_err, is_ok
 from pipevine.worker_state import WorkerState
 
@@ -248,6 +248,25 @@ class TestPipelineCancellation:
         assert get_err(run_result) == "stop"
 
     @pytest.mark.asyncio
+    async def test_cancel_from_stage(self) -> None:
+        data = list(range(50))
+
+        @work_pool(buffer=2)
+        async def double(x: int, state: WorkerState) -> int | KillSwitch:
+            if x > 10:
+                return KillSwitch("too large")
+            return x * 2
+        
+        pipeline = Pipeline(iter(data)) >> double
+        pipeline.log = False
+
+        run_task = asyncio.create_task(pipeline.run())
+        run_result = await asyncio.wait_for(run_task, timeout=2)
+
+        assert is_err(run_result)
+        assert get_err(run_result) == "too large"
+
+    @pytest.mark.asyncio
     async def test_cancel_before_run_returns_error(self) -> None:
         pipeline = Pipeline(iter([1, 2, 3]))
         err = await pipeline.cancel("early")
@@ -335,6 +354,7 @@ class TestPipelineErrorHandling:
         
         pipeline = Pipeline(iter(data)) >> identity
         pipeline.log = True
+        pipeline._log_emit = True
         
         with patch('pipevine.pipeline.logger.info') as mock_print:
             result = await pipeline.run()

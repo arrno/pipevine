@@ -7,7 +7,7 @@ from enum import Enum, auto
 from dataclasses import dataclass
 from multiprocessing.process import BaseProcess
 from asyncio import Queue, Task, QueueFull, QueueEmpty
-from typing import Any, Callable, Optional, TypeAlias, TypeVar
+from typing import Any, Callable, Optional, TypeAlias, TypeVar, Final, Awaitable
 
 from .async_util import (
     SENTINEL,
@@ -21,6 +21,11 @@ from .async_util import (
 from .util import Err
 from .worker import default_mp_ctx_method, mp_worker, worker
 from .worker_state import WorkerHandler
+
+
+@dataclass
+class KillSwitch():
+    reason: str
 
 
 T = TypeVar("T")
@@ -52,6 +57,9 @@ def _split_buffer_across(n: int, total: int) -> list[int]:
     return sizes
 
 
+async def dummy(x: str | None) -> None:
+    return None
+
 class Stage:
     def __init__(
             self,
@@ -75,6 +83,7 @@ class Stage:
         self._outbound: Queue | None = None
         self._inbound: Queue | None = None
         self._metrics = StageMetrics()
+        self._on_kill_switch: Callable[[str | None], Awaitable[Any]] = dummy
 
     def _register_task(self, task: Task[Any]) -> None:
         self._tasks.add(task)
@@ -221,6 +230,19 @@ class Stage:
             # pipe muxed -> outbound
             while True:
                 item = await muxed.get()
+                if isinstance(item, KillSwitch):
+
+                    async def do_cancel() -> Any:
+                        return await self._on_kill_switch(item.reason)
+                    cancel_task: Task = asyncio.create_task(do_cancel())
+
+                    def _finalize(task: Task[Any]) -> None:
+                        with contextlib.suppress(Exception):
+                            task.result()
+
+                    cancel_task.add_done_callback(_finalize)
+                    break
+                
                 await outbound.put(item)
                 if item is SENTINEL:
                     break

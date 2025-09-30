@@ -38,6 +38,7 @@ async def test_pipeline_results_with_buffers_and_chained_stages() -> None:
 
     data = [1, 2, 3]
     pipeline = Pipeline(iter(data)) >> add_one >> double
+    pipeline._log_emit = True
 
     ok, outputs = await _run_and_collect(pipeline)
 
@@ -63,6 +64,7 @@ async def test_pipeline_results_with_retries_and_multiple_workers() -> None:
 
     data = [1, 2, 3, 4]
     pipeline = Pipeline(iter(data)) >> flaky_times_ten >> add_one
+    pipeline._log_emit = True
 
     ok, outputs = await _run_and_collect(pipeline)
 
@@ -80,7 +82,8 @@ async def test_pipeline_results_with_multiprocessing_stage() -> None:
 
     data = [2, 3, 4]
     pipeline = Pipeline(iter(data)) >> mp_stage >> subtract_one
-
+    pipeline._log_emit = True
+    
     ok, outputs = await _run_and_collect(pipeline)
 
     assert ok
@@ -106,7 +109,8 @@ async def test_pipeline_results_with_mix_pool_and_fork_merge() -> None:
 
     data = [1, 2]
     pipeline = Pipeline(iter(data)) >> preprocess >> fan_out >> finalize
-
+    pipeline._log_emit = True
+    
     ok, outputs = await _run_and_collect(pipeline)
 
     assert ok
@@ -127,6 +131,7 @@ async def test_pipeline_results_with_async_stages() -> None:
 
     data = range(5)
     pipeline = Pipeline(iter(data)) >> async_increment >> async_double
+    pipeline._log_emit = True
 
     ok, outputs = await _run_and_collect(pipeline)
 

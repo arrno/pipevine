@@ -6,7 +6,7 @@ import asyncio
 import logging
 import contextlib
 from threading import Thread
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from asyncio import Queue, shield, Task, QueueEmpty, QueueFull
 from collections.abc import AsyncIterator as AsyncIteratorABC, Iterator as IteratorABC
 from typing import Any, Iterator, AsyncIterator, Awaitable, Callable, cast
@@ -25,7 +25,7 @@ class PipelineMetrics:
     duration: float = 0
     processed: int = 0
     failed: int = 0
-    stages: list[StageMetrics] = []
+    stages: list[StageMetrics] = field(default_factory=list)
 
 
 class Pipeline:
@@ -44,6 +44,7 @@ class Pipeline:
         self._gen_stream: Queue | None = None
         self._parent: Pipeline | None = None
         self._metrics = PipelineMetrics()
+        self._log_emit = False
         
         if isinstance(gen, Pipeline):
             self._parent = gen
@@ -64,6 +65,7 @@ class Pipeline:
         if isinstance(st, Pipeline):
             st.gen(self.iter())
             return st
+        st._on_kill_switch = self.cancel
         if len(st.functions) > 0:
             self.stages.append(st)
         return self
@@ -131,7 +133,8 @@ class Pipeline:
             val = await q.get()
             if val is SENTINEL:
                 break
-            self.__handle_log(val)
+            if self._log_emit:
+                logger.info(val)
             
     async def run(self) -> Result:
         if self.cancel_event.is_set():

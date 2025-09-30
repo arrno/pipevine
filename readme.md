@@ -142,6 +142,15 @@ pipe = (
 result = await pipe.run()
 ```
 
+### Cancellation
+
+Graceful shutdown can be triggered in one of two ways:
+
+-   Cancel the pipeline directly via the `cancel` method
+-   Emil this special object from any stage handler: `from pipevine.stage import KillSwitch`
+
+⚠️ Exceptions raised by stage handlers are counted, discarded, and optionally logged
+
 ## Configuration Options
 
 ### Stage Parameters
@@ -173,6 +182,10 @@ Items are broadcast to all workers, results are merged:
 async def aggregate(item, state):
     return analyze_aspect(item)  # Each worker analyzes different aspect
 ```
+
+## Insights
+
+For extra visibility during debugging, enable logging: `pipe = Pipeline(range(100), log=True)`
 
 ## Advanced Examples
 
