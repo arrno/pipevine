@@ -3,11 +3,13 @@ from __future__ import annotations
 import time
 import asyncio
 import contextlib
+import multiprocessing as mp
 from enum import Enum, auto
 from dataclasses import dataclass
 from multiprocessing.process import BaseProcess
+from multiprocessing.sharedctypes import Synchronized
 from asyncio import Queue, Task, QueueFull, QueueEmpty
-from typing import Any, Callable, Optional, TypeAlias, TypeVar, Final, Awaitable
+from typing import Any, Callable, Optional, TypeAlias, TypeVar, Awaitable
 
 from .async_util import (
     SENTINEL,
@@ -98,7 +100,6 @@ class Stage:
             self._metrics.processed += 1
     
     def _count_err(self) -> None:
-        # do we need to lock if passing this callback to threads/processes?
         self._metrics.failed += 1
 
     @property
@@ -114,144 +115,156 @@ class Stage:
         self._inbound = inbound
         self._outbound = outbound
 
+        mp_err_counter: Synchronized[int] | None = None
+
         async def _run_async() -> None:
+            nonlocal mp_err_counter
             merge = self.merge if self.merge != None else lambda x: x
 
-            if not self.multi_proc:
-                # ---- ASYNC workers ----
-                if self._choose is PathChoice.One:
-                    shared_in = await make_shared_inbound_for_pool(
-                        inbound,
-                        n_workers=len(self.functions),
-                        maxsize=self.buffer,
-                        register_task=self._register_task,
-                    )
-                    outqs = [
-                        worker(
-                            fn,
-                            1,
-                            self.retries,
-                            shared_in,
-                            self.log,
+            try:
+                if not self.multi_proc:
+                    # ---- ASYNC workers ----
+                    if self._choose is PathChoice.One:
+                        shared_in = await make_shared_inbound_for_pool(
+                            inbound,
+                            n_workers=len(self.functions),
+                            maxsize=self.buffer,
                             register_task=self._register_task,
-                        ) 
-                        for fn in self.functions
-                    ]
-
-                    muxed = multiplex_async_queues(outqs, register_task=self._register_task)
-                else:  # PathType.All
-                    sizes = _split_buffer_across(len(self.functions), self.buffer)
-                    per_ins = await make_broadcast_inbounds(
-                        inbound,
-                        sizes=sizes,
-                        register_task=self._register_task,
-                    )
-                    outqs = [
-                        worker(
-                            fn,
-                            1,
-                            self.retries,
-                            q_in,
-                            self.log,
-                            register_task=self._register_task,
-                        ) 
-                        for fn, q_in in zip(self.functions, per_ins)
-                    ]
-
-                    muxed = multiplex_and_merge_async_queues(
-                        outqs,
-                        merge,
-                        register_task=self._register_task,
-                    )
-
-            else:
-                outqs_async: list[Queue] = []
-                ctx_method = default_mp_ctx_method(self.functions)
-                # ---- MP workers ----
-                if self._choose is PathChoice.One:
-                    shared_in = await make_shared_inbound_for_pool(
-                        inbound,
-                        n_workers=len(self.functions),
-                        maxsize=self.buffer,
-                        register_task=self._register_task,
-                    )
-                    mp_in = await async_to_mp_queue_with_ready(
-                        shared_in,
-                        ctx_method=ctx_method,
-                        sentinel_count=len(self.functions),
-                        register_task=self._register_task,
-                    )
-
-                    for fn in self.functions:
-                        mp_out, proc = mp_worker(
-                            fn,
-                            1,
-                            self.retries,
-                            mp_in,
-                            ctx_method=ctx_method,
-                            log=self.log,
                         )
-                        self._processes.add(proc)
-                        outqs_async.append(mp_to_async_queue(mp_out))
+                        outqs = [
+                            worker(
+                                fn,
+                                1,
+                                self.retries,
+                                shared_in,
+                                self.log,
+                                register_task=self._register_task,
+                                on_err=self._count_err,
+                            )
+                            for fn in self.functions
+                        ]
 
-                    muxed = multiplex_async_queues(outqs_async, register_task=self._register_task)
+                        muxed = multiplex_async_queues(outqs, register_task=self._register_task)
+                    else:  # PathType.All
+                        sizes = _split_buffer_across(len(self.functions), self.buffer)
+                        per_ins = await make_broadcast_inbounds(
+                            inbound,
+                            sizes=sizes,
+                            register_task=self._register_task,
+                        )
+                        outqs = [
+                            worker(
+                                fn,
+                                1,
+                                self.retries,
+                                q_in,
+                                self.log,
+                                register_task=self._register_task,
+                                on_err=self._count_err,
+                            )
+                            for fn, q_in in zip(self.functions, per_ins)
+                        ]
 
-                else:  # PathType.All
-                    sizes = _split_buffer_across(len(self.functions), self.buffer)
-                    per_ins = await make_broadcast_inbounds(
-                        inbound,
-                        sizes=sizes,
-                        register_task=self._register_task,
-                    )
-                    
-                    for fn, q_in in zip(self.functions, per_ins):
+                        muxed = multiplex_and_merge_async_queues(
+                            outqs,
+                            merge,
+                            register_task=self._register_task,
+                        )
+                else:
+                    outqs_async: list[Queue] = []
+                    ctx_method = default_mp_ctx_method(self.functions)
+                    ctx = mp.get_context(ctx_method)
+                    mp_err_counter = ctx.Value("i", 0)
+                    # ---- MP workers ----
+                    if self._choose is PathChoice.One:
+                        shared_in = await make_shared_inbound_for_pool(
+                            inbound,
+                            n_workers=len(self.functions),
+                            maxsize=self.buffer,
+                            register_task=self._register_task,
+                        )
                         mp_in = await async_to_mp_queue_with_ready(
-                            q_in,
+                            shared_in,
                             ctx_method=ctx_method,
+                            sentinel_count=len(self.functions),
                             register_task=self._register_task,
                         )
-                        mp_out, proc = mp_worker(
-                            fn,
-                            1,
-                            self.retries,
-                            mp_in,
-                            ctx_method=ctx_method,
-                            log=self.log,
+
+                        for fn in self.functions:
+                            mp_out, proc = mp_worker(
+                                fn,
+                                1,
+                                self.retries,
+                                mp_in,
+                                ctx_method=ctx_method,
+                                log=self.log,
+                                err_counter=mp_err_counter,
+                            )
+                            self._processes.add(proc)
+                            outqs_async.append(mp_to_async_queue(mp_out))
+
+                        muxed = multiplex_async_queues(outqs_async, register_task=self._register_task)
+
+                    else:  # PathType.All
+                        sizes = _split_buffer_across(len(self.functions), self.buffer)
+                        per_ins = await make_broadcast_inbounds(
+                            inbound,
+                            sizes=sizes,
+                            register_task=self._register_task,
                         )
-                        self._processes.add(proc)
-                        outqs_async.append(mp_to_async_queue(mp_out))
 
-                    muxed = multiplex_and_merge_async_queues(
-                        outqs_async,
-                        merge,
-                        register_task=self._register_task,
-                    )
+                        for fn, q_in in zip(self.functions, per_ins):
+                            mp_in = await async_to_mp_queue_with_ready(
+                                q_in,
+                                ctx_method=ctx_method,
+                                register_task=self._register_task,
+                            )
+                            mp_out, proc = mp_worker(
+                                fn,
+                                1,
+                                self.retries,
+                                mp_in,
+                                ctx_method=ctx_method,
+                                log=self.log,
+                                err_counter=mp_err_counter,
+                            )
+                            self._processes.add(proc)
+                            outqs_async.append(mp_to_async_queue(mp_out))
 
-            # pipe muxed -> outbound
-            while True:
-                item = await muxed.get()
-                if isinstance(item, KillSwitch):
+                        muxed = multiplex_and_merge_async_queues(
+                            outqs_async,
+                            merge,
+                            register_task=self._register_task,
+                        )
 
-                    async def do_cancel() -> Any:
-                        return await self._on_kill_switch(item.reason)
-                    cancel_task: Task = asyncio.create_task(do_cancel())
+                # pipe muxed -> outbound
+                while True:
+                    item = await muxed.get()
+                    if isinstance(item, KillSwitch):
 
-                    def _finalize(task: Task[Any]) -> None:
-                        with contextlib.suppress(Exception):
-                            task.result()
+                        async def do_cancel() -> Any:
+                            return await self._on_kill_switch(item.reason)
+                        cancel_task: Task = asyncio.create_task(do_cancel())
 
-                    cancel_task.add_done_callback(_finalize)
-                    break
-                
-                await outbound.put(item)
-                if item is SENTINEL:
-                    break
-                self._count(item)
+                        def _finalize(task: Task[Any]) -> None:
+                            with contextlib.suppress(Exception):
+                                task.result()
+
+                        cancel_task.add_done_callback(_finalize)
+                        break
+                    
+                    await outbound.put(item)
+                    if item is SENTINEL:
+                        break
+                    self._count(item)
+            finally:
+                if mp_err_counter is not None:
+                    self._metrics.failed += mp_err_counter.value
+                self._metrics.stop = time.time()
+                self._metrics.duration = max(0.0, self._metrics.stop - self._metrics.start)
         
+        self._metrics = StageMetrics()
         self._metrics.start = time.time()
-
-        # TODO -> mark stop/duration when task completes.. 
-        # also, pass in _count_err callback to workers
 
         task = asyncio.create_task(_run_async())
         self._register_task(task)

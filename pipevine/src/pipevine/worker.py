@@ -8,6 +8,7 @@ from asyncio import Queue, shield, Task
 from collections import deque
 from multiprocessing import Queue as MPQueue, get_all_start_methods
 from multiprocessing.process import BaseProcess
+from multiprocessing.sharedctypes import Synchronized
 from typing import Any, Callable, Sequence, Tuple, TypeVar
 
 from .async_util import SENTINEL
@@ -25,6 +26,7 @@ def worker_no_buf(
     log: bool = False,
     *,
     register_task: Callable[[Task[Any]], None] | None = None,
+    on_err: Callable[[], None] | None = None,
 ) -> Queue[Any]: 
     
     outbound: Queue = Queue(1)
@@ -42,6 +44,8 @@ def worker_no_buf(
                     result = await result
                 if not is_ok(result):
                     if log: logger.warning(result)
+                    if on_err:
+                        on_err()
                     continue
                 await outbound.put(unwrap(result))
         finally:
@@ -61,6 +65,7 @@ def worker(
     log: bool = False,
     *,
     register_task: Callable[[Task[Any]], None] | None = None,
+    on_err: Callable[[], None] | None = None,
 ) -> Queue[Any]:
     
     if buf_size <= 0:
@@ -70,6 +75,7 @@ def worker(
             inbound,
             log,
             register_task=register_task,
+            on_err=on_err,
         )
     
     outbound: Queue = Queue(1)
@@ -102,6 +108,8 @@ def worker(
                     result = await result
                 if not is_ok(result):
                     if log: logger.warning(result)
+                    if on_err:
+                        on_err()
                     continue
                 await outbound.put(unwrap(result))
 
@@ -148,6 +156,7 @@ def _mp_task(
     retries: int, 
     buf_size: int, 
     log: bool = False,
+    err_counter: Synchronized[int] | None = None,
 ) -> None:
     from queue import Empty
     handler = with_retry(retries)(f)
@@ -186,6 +195,9 @@ def _mp_task(
             # async functions should be wrapped or converted to sync before mp_worker
             if not is_ok(result):
                 if log: logger.warning(result)
+                if err_counter is not None:
+                    with err_counter.get_lock():
+                        err_counter.value += 1
                 continue
             outbound.put(unwrap(result))
 
@@ -202,6 +214,7 @@ def mp_worker(
     *,
     ctx_method: str | None = None,
     log: bool = False,
+    err_counter: Any | None = None,
 ) -> Tuple[MPQueue, BaseProcess]:
 
     method = _choose_ctx_method((f,), ctx_method)
@@ -212,7 +225,7 @@ def mp_worker(
     process_factory = getattr(ctx, "Process")
     proc = process_factory(
         target=_mp_task,
-        args=(f, inbound, outbound, retries, buf_size, log),
+        args=(f, inbound, outbound, retries, buf_size, log, err_counter),
         daemon=True,
     )
     proc.start()

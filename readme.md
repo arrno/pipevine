@@ -54,7 +54,7 @@ or run pipeline as an iterator
 pipe = (
     Pipeline(range(100)) >>
     process_data >>
-    validate_date
+    validate_data
 )
 
 for item in pipe.iter():
@@ -144,12 +144,18 @@ result = await pipe.run()
 
 ### Cancellation
 
-Graceful shutdown can be triggered in one of two ways:
+Pipelines support cooperative, graceful shutdown. You can trigger cancellation in two ways:
 
--   Cancel the pipeline directly via the `cancel` method
--   Emil this special object from any stage handler: `from pipevine.stage import KillSwitch`
+-   Call the pipeline’s `cancel` method directly.
+-   Emit a special kill signal from any stage handler:
+    ```python
+    from pipevine.stage import KillSwitch
+    return KillSwitch
+    ```
 
-⚠️ Exceptions raised by stage handlers are counted, discarded, and optionally logged
+When cancellation is triggered, Pipevine drains in-flight work and shuts down workers cleanly.
+
+⚠️ Exceptions raised by stage handlers are **counted**, safely discarded, and (optionally) logged.
 
 ## Configuration Options
 
@@ -183,9 +189,35 @@ async def aggregate(item, state):
     return analyze_aspect(item)  # Each worker analyzes different aspect
 ```
 
-## Insights
+## Observability
 
-For extra visibility during debugging, enable logging: `pipe = Pipeline(range(100), log=True)`
+### Metrics
+
+When a pipeline finishes, it returns a `Result` object. This is either:
+
+-   `Err` — if the pipeline failed, or
+-   `PipelineMetrics` — if the pipeline completed successfully.
+
+`PipelineMetrics` contains counters and timings for visibility and observability:
+
+```python
+@dataclass
+class PipelineMetrics:
+    start: float = 0       # Start timestamp
+    stop: float = 0        # Stop timestamp
+    duration: float = 0    # Total runtime (seconds)
+    processed: int = 0     # Number of successfully processed items
+    failed: int = 0        # Number of failed items
+    stages: list[StageMetrics] = field(default_factory=list)
+```
+
+### Logging
+
+For extra visibility during debugging, enable logging:
+
+```python
+pipe = Pipeline(range(100), log=True)
+```
 
 ## Advanced Examples
 

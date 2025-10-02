@@ -1,6 +1,7 @@
 """Tests for stage module - Stage class, work_pool, mix_pool decorators."""
 
 import asyncio
+import time
 from asyncio import Queue
 from typing import Any, Callable
 
@@ -9,6 +10,23 @@ import pytest
 from pipevine.async_util import SENTINEL
 from pipevine.stage import PathChoice, Stage, as_stage, mix_pool, work_pool
 from pipevine.worker_state import WorkerState
+
+
+def _mp_twice(x: int, state: WorkerState) -> int:
+    return x * 2
+
+
+def _mp_increment(x: int, state: WorkerState) -> int:
+    return x + 1
+
+
+def _mp_fail_once_then_succeed(x: int, state: WorkerState) -> int:
+    if not state.get("failed_once", False):
+        state.update(failed_once=True)
+        time.sleep(0.05)
+        raise ValueError("boom")
+    time.sleep(0.01)
+    return x
 
 
 class TestStageClass:
@@ -106,6 +124,220 @@ class TestStageClass:
         # Results should include both add_one and multiply_two transformations
         # Since distribution is non-deterministic, we just check we got results
         assert all(isinstance(r, int) for r in results)
+
+    @pytest.mark.asyncio
+    async def test_stage_metrics_capture_processing(self) -> None:
+        def double(x: int, state: WorkerState) -> int:
+            return x * 2
+
+        stage = Stage(
+            buffer=2,
+            retries=1,
+            multi_proc=False,
+            functions=[double],
+        )
+
+        inbound: Queue = asyncio.Queue()
+        for i in range(3):
+            await inbound.put(i)
+        await inbound.put(SENTINEL)
+
+        outbound = stage.run(inbound)
+        results: list[int] = []
+        while True:
+            item = await outbound.get()
+            if item is SENTINEL:
+                break
+            results.append(item)
+
+        await stage.close()
+        metrics = stage.metrics
+
+        assert metrics.processed == len(results)
+        assert metrics.failed == 0
+        assert metrics.start > 0
+        assert metrics.stop >= metrics.start
+        assert metrics.duration >= 0
+
+    @pytest.mark.asyncio
+    async def test_stage_metrics_counts_failures(self) -> None:
+        def flaky(x: int, state: WorkerState) -> int:
+            if x == 0:
+                raise ValueError("boom")
+            return x
+
+        stage = Stage(
+            buffer=2,
+            retries=1,
+            multi_proc=False,
+            functions=[flaky],
+        )
+
+        inbound: Queue = asyncio.Queue()
+        await inbound.put(0)
+        await inbound.put(1)
+        await inbound.put(SENTINEL)
+
+        outbound = stage.run(inbound)
+        results: list[int] = []
+        while True:
+            item = await outbound.get()
+            if item is SENTINEL:
+                break
+            results.append(item)
+
+        await stage.close()
+        metrics = stage.metrics
+
+        assert results == [1]
+        assert metrics.processed == len(results)
+        assert metrics.failed == 1
+
+    @pytest.mark.asyncio
+    async def test_stage_metrics_multi_worker_async(self) -> None:
+        def add_one(x: int, state: WorkerState) -> int:
+            return x + 1
+
+        def add_two(x: int, state: WorkerState) -> int:
+            return x + 2
+
+        stage = Stage(
+            buffer=4,
+            retries=1,
+            multi_proc=False,
+            functions=[add_one, add_two],
+        )
+
+        inbound: Queue = asyncio.Queue()
+        for value in range(6):
+            await inbound.put(value)
+        await inbound.put(SENTINEL)
+
+        outbound = stage.run(inbound)
+        results: list[int] = []
+        while True:
+            item = await outbound.get()
+            if item is SENTINEL:
+                break
+            results.append(item)
+
+        await stage.close()
+        metrics = stage.metrics
+
+        assert len(results) == 6
+        assert metrics.processed == len(results)
+        assert metrics.failed == 0
+        assert metrics.start > 0
+        assert metrics.stop >= metrics.start
+        assert metrics.duration >= 0
+
+    @pytest.mark.asyncio
+    async def test_stage_metrics_multi_worker_multiproc(self) -> None:
+        stage = Stage(
+            buffer=4,
+            retries=1,
+            multi_proc=True,
+            functions=[_mp_twice, _mp_increment],
+        )
+
+        inbound: Queue = asyncio.Queue()
+        for value in range(5):
+            await inbound.put(value)
+        await inbound.put(SENTINEL)
+
+        outbound = stage.run(inbound)
+        results: list[int] = []
+        while True:
+            item = await outbound.get()
+            if item is SENTINEL:
+                break
+            results.append(item)
+
+        await stage.close()
+        metrics = stage.metrics
+
+        assert len(results) == 5
+        assert metrics.processed == len(results)
+        assert metrics.failed == 0
+        assert metrics.start > 0
+        assert metrics.stop >= metrics.start
+        assert metrics.duration >= 0
+
+    @pytest.mark.asyncio
+    async def test_stage_metrics_successful_retry_not_failure(self) -> None:
+        def flaky_with_retry(x: int, state: WorkerState) -> int:
+            attempts = state.get("attempts", {})
+            count = attempts.get(x, 0) + 1
+            attempts[x] = count
+            state.update(attempts=attempts)
+            if count == 1:
+                raise ValueError("first try")
+            return x * 10
+
+        stage = Stage(
+            buffer=1,
+            retries=2,
+            multi_proc=False,
+            functions=[flaky_with_retry],
+        )
+
+        inbound: Queue = asyncio.Queue()
+        await inbound.put(1)
+        await inbound.put(2)
+        await inbound.put(SENTINEL)
+
+        outbound = stage.run(inbound)
+        results: list[int] = []
+        while True:
+            item = await outbound.get()
+            if item is SENTINEL:
+                break
+            results.append(item)
+
+        await stage.close()
+        metrics = stage.metrics
+
+        assert results == [10, 20]
+        assert metrics.processed == len(results)
+        assert metrics.failed == 0
+
+    @pytest.mark.asyncio
+    async def test_stage_metrics_multi_proc_workers_fail_and_succeed(self) -> None:
+        stage = Stage(
+            buffer=3,
+            retries=1,
+            multi_proc=True,
+            functions=[_mp_fail_once_then_succeed, _mp_fail_once_then_succeed],
+        )
+
+        inbound: Queue = asyncio.Queue()
+        input_values = list(range(6))
+
+        outbound = stage.run(inbound)
+
+        async def produce() -> None:
+            for value in input_values:
+                await inbound.put(value)
+            await inbound.put(SENTINEL)
+
+        producer = asyncio.create_task(produce())
+        results: list[int] = []
+        while True:
+            item = await outbound.get()
+            if item is SENTINEL:
+                break
+            results.append(item)
+
+        await producer
+        await stage.close()
+        metrics = stage.metrics
+
+        assert len(results) == len(input_values) - 2  # one failure per worker
+        assert metrics.processed == len(results)
+        assert metrics.failed == 2
+        assert metrics.start > 0
+        assert metrics.stop >= metrics.start
+        assert metrics.duration >= 0
     
     @pytest.mark.asyncio
     async def test_stage_close(self) -> None:

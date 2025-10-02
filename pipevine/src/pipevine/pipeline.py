@@ -6,7 +6,7 @@ import asyncio
 import logging
 import contextlib
 from threading import Thread
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from asyncio import Queue, shield, Task, QueueEmpty, QueueFull
 from collections.abc import AsyncIterator as AsyncIteratorABC, Iterator as IteratorABC
 from typing import Any, Iterator, AsyncIterator, Awaitable, Callable, cast
@@ -38,12 +38,12 @@ class Pipeline:
         self.log = log
         self.generator: Iterator[Any] | AsyncIterator[Any] | None = None
         self.stages: list[Stage] = []
-        self.result: Result = "ok"
+        self._metrics = PipelineMetrics()
+        self.result: Result = self._metrics
         self.cancel_event = asyncio.Event()
         self.tasks: set[Task[Any]] = set()
         self._gen_stream: Queue | None = None
         self._parent: Pipeline | None = None
-        self._metrics = PipelineMetrics()
         self._log_emit = False
         
         if isinstance(gen, Pipeline):
@@ -57,7 +57,7 @@ class Pipeline:
     def gen(self, gen: Iterator[Any] | AsyncIterator[Any]) -> Pipeline:
         self.generator = gen
         self.cancel_event.clear()
-        self.result = "ok"
+        self.result = self._metrics
         return self
     
     def stage(self, st: Stage | Pipeline) -> Pipeline:
@@ -72,6 +72,10 @@ class Pipeline:
     
     def __rshift__(self, other: Stage | Pipeline) -> Pipeline:
         return self.stage(other)
+
+    def _reset_metrics(self) -> None:
+        self._metrics = PipelineMetrics()
+        self.result = self._metrics
 
     def __generate(self, gen: Iterator[Any] | AsyncIterator[Any]) -> asyncio.Queue[Any]:
         outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
@@ -110,7 +114,6 @@ class Pipeline:
                     pass
         
         self._metrics.start = time.time()
-        # TODO -> record stop/duration when the drain exits
         
         task = asyncio.create_task(run())
         self.tasks.add(task)
@@ -145,16 +148,22 @@ class Pipeline:
             self.__handle_log(err.message)
             return err
         
+        self._reset_metrics()
         stream = self.__generate(self.generator)
         for stage in self.stages:
             stream = stage.run(stream)
         await self.__drain(stream)
+        self._calculate_metrics()
+        if isinstance(self.result, Err):
+            return self.result
+        self.result = self._metrics
         return self.result
     
     async def as_async_generator(self) -> AsyncIterator:
         if not self.generator:
             raise RuntimeError("Pipeline.as_async_generator needs a self.generator")
 
+        self._reset_metrics()
         stream = self.__generate(self.generator)
         for stage in self.stages:
             stream = stage.run(stream)
@@ -164,6 +173,10 @@ class Pipeline:
             yield val
             if val is SENTINEL:
                 break
+
+        self._calculate_metrics()
+        if not isinstance(self.result, Err):
+            self.result = self._metrics
 
     def iter(self, max_buffer: int = 64) -> Iterator[Any]:
         q: queue.Queue = queue.Queue(maxsize=max_buffer)
@@ -204,10 +217,25 @@ class Pipeline:
             yield item 
 
     def _calculate_metrics(self) -> None:
-        '''
-        TODO -> if done/canceled, get all stage metrics and tally totals
-        '''
-        pass
+        stage_metrics: list[StageMetrics] = []
+        total_failed = 0
+
+        for stage in self.stages:
+            metrics = stage.metrics
+            stage_metrics.append(replace(metrics))
+            total_failed += metrics.failed
+
+        if stage_metrics:
+            self._metrics.processed = stage_metrics[-1].processed
+
+        self._metrics.failed = total_failed
+        self._metrics.stages = stage_metrics
+        stop_time = time.time()
+        self._metrics.stop = stop_time
+        if self._metrics.start:
+            self._metrics.duration = max(0.0, stop_time - self._metrics.start)
+        else:
+            self._metrics.duration = 0.0
     
     @property
     def metrics(self) -> PipelineMetrics:
@@ -267,4 +295,5 @@ class Pipeline:
                 self._gen_stream.put_nowait(SENTINEL)
             self._gen_stream = None
 
+        self._calculate_metrics()
         return self.result

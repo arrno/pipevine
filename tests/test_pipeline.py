@@ -8,10 +8,18 @@ from unittest.mock import patch
 import pytest
 
 from pipevine.async_util import SENTINEL
-from pipevine.pipeline import Pipeline
+from pipevine.pipeline import Pipeline, PipelineMetrics
 from pipevine.stage import Stage, mix_pool, work_pool, KillSwitch
 from pipevine.util import Err, get_err, is_err, is_ok
 from pipevine.worker_state import WorkerState
+
+
+def _metric_mp_double(x: int, state: WorkerState) -> int:
+    return x * 2
+
+
+def _metric_mp_increment(x: int, state: WorkerState) -> int:
+    return x + 1
 
 
 class TestPipelineCreation:
@@ -25,6 +33,7 @@ class TestPipelineCreation:
         assert pipeline.stages == []
         assert pipeline.log is True
         assert is_ok(pipeline.result)
+        assert isinstance(pipeline.result, PipelineMetrics)
     
     def test_pipeline_creation_empty(self) -> None:
         empty_gen: Iterator[Any] = iter([])
@@ -167,11 +176,112 @@ class TestPipelineExecution:
         # But we don't capture the final output in this test
 
     @pytest.mark.asyncio
+    async def test_pipeline_metrics_success(self) -> None:
+        @work_pool()
+        def double(x: int, state: WorkerState) -> int:
+            return x * 2
+
+        data = [1, 2, 3]
+        pipeline = Pipeline(iter(data)) >> double
+        pipeline.log = False
+
+        result = await pipeline.run()
+
+        assert isinstance(result, PipelineMetrics)
+        assert result is pipeline.metrics
+        assert result.processed == 3
+        assert result.failed == 0
+        assert len(result.stages) == 1
+        stage_metrics = result.stages[0]
+        assert stage_metrics.processed == 3
+        assert stage_metrics.failed == 0
+        assert stage_metrics.start > 0
+        assert stage_metrics.stop >= stage_metrics.start
+        assert stage_metrics.duration >= 0
+        assert result.start > 0
+        assert result.stop >= result.start
+        assert result.duration >= 0
+
+    @pytest.mark.asyncio
+    async def test_pipeline_metrics_counts_failures(self) -> None:
+        @work_pool(retries=1)
+        def flaky(x: int, state: WorkerState) -> int:
+            if x == 1:
+                raise ValueError("nope")
+            return x
+
+        data = [1, 2, 3]
+        pipeline = Pipeline(iter(data)) >> flaky
+        pipeline.log = False
+
+        result = await pipeline.run()
+
+        assert isinstance(result, PipelineMetrics)
+        assert result.failed == 1
+        assert result.processed == 2
+        assert len(result.stages) == 1
+        stage_metrics = result.stages[0]
+        assert stage_metrics.failed == 1
+        assert stage_metrics.processed == 2
+
+    @pytest.mark.asyncio
+    async def test_pipeline_metrics_multi_worker_async_and_mp(self) -> None:
+        @work_pool(buffer=3, num_workers=2)
+        async def async_add_one(x: int, state: WorkerState) -> int:
+            await asyncio.sleep(0)
+            return x + 1
+
+        mp_stage = work_pool(buffer=4, num_workers=2, multi_proc=True)(_metric_mp_double)
+
+        data = [1, 2, 3, 4]
+        pipeline = Pipeline(iter(data)) >> async_add_one >> mp_stage
+        pipeline.log = False
+
+        result = await pipeline.run()
+
+        assert isinstance(result, PipelineMetrics)
+        assert len(result.stages) == 2
+        first_stage, second_stage = result.stages
+        assert first_stage.processed == len(data)
+        assert second_stage.processed == len(data)
+        assert first_stage.failed == 0
+        assert second_stage.failed == 0
+
+    @pytest.mark.asyncio
+    async def test_pipeline_metrics_retry_success_not_failure(self) -> None:
+        @work_pool(retries=3)
+        def flaky_retry(x: int, state: WorkerState) -> int:
+            attempts = state.get("attempts", {})
+            count = attempts.get(x, 0) + 1
+            attempts[x] = count
+            state.update(attempts=attempts)
+            if count == 1:
+                raise ValueError("fail first")
+            return x
+
+        mp_stage = work_pool(buffer=2, num_workers=2, multi_proc=True)(_metric_mp_increment)
+
+        data = [1, 2, 3]
+        pipeline = Pipeline(iter(data)) >> flaky_retry >> mp_stage
+        pipeline.log = False
+
+        result = await pipeline.run()
+
+        assert isinstance(result, PipelineMetrics)
+        assert result.failed == 0
+        assert len(result.stages) == 2
+        retry_stage, mp_metrics = result.stages
+        assert retry_stage.failed == 0
+        assert retry_stage.processed == len(data)
+        assert mp_metrics.failed == 0
+        assert mp_metrics.processed == len(data)
+
+    @pytest.mark.asyncio
     async def test_multi_stage_pipeline_num_workers(self) -> None:
         @work_pool(num_workers=2)
         def add_one(x: int, state: WorkerState) -> int:
             return x + 1
-        
+
         @work_pool(num_workers=3)
         def multiply_two(x: int, state: WorkerState) -> int:
             return x * 2
