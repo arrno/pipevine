@@ -150,7 +150,7 @@ Pipelines support cooperative, graceful shutdown. You can trigger cancellation i
 -   Emit a special kill signal from any stage handler:
     ```python
     from pipevine.stage import KillSwitch
-    return KillSwitch
+    return KillSwitch("oh no!")
     ```
 
 When cancellation is triggered, Pipevine drains in-flight work and shuts down workers cleanly.

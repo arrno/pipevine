@@ -491,27 +491,6 @@ class TestPipelineErrorHandling:
         # Should not have printed anything
         assert not mock_print.called
         assert is_ok(result)
-    
-    @pytest.mark.asyncio
-    async def test_pipeline_with_stage_errors(self) -> None:
-        """Test pipeline behavior when stages produce errors."""
-        def error_data() -> Generator:
-            yield 1
-            yield Err("embedded error")
-            yield 3
-        
-        @work_pool()
-        def identity(x: int, state: WorkerState) -> int:
-            return x
-        
-        pipeline = Pipeline(error_data()) >> identity
-        pipeline.log = False
-        
-        result = await pipeline.run()
-        
-        # Pipeline should handle embedded errors
-        assert is_err(result)
-        assert "embedded error" in get_err(result)
 
 
 class TestPipelineDataHandling:
@@ -531,27 +510,7 @@ class TestPipelineDataHandling:
         
         result = await pipeline.run()
         assert is_ok(result)
-    
-    @pytest.mark.asyncio
-    async def test_pipeline_with_mixed_result_types(self) -> None:
-        """Test pipeline behavior with mixed Result types in data."""
-        def mixed_data() -> Generator:
-            yield 1
-            yield Err("error in data")
-            yield 3
-        
-        @work_pool()
-        def identity(x: int, state: WorkerState) -> int:
-            return x
-        
-        pipeline = Pipeline(mixed_data()) >> identity
-        pipeline.log = False
-        
-        result = await pipeline.run()
-        
-        # Pipeline should handle the embedded error
-        assert is_err(result)
-        assert "error in data" in get_err(result)
+
     
     @pytest.mark.asyncio
     async def test_pipeline_with_iterator_exception(self) -> None:

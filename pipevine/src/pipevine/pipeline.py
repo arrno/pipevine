@@ -39,7 +39,7 @@ class Pipeline:
         self.generator: Iterator[Any] | AsyncIterator[Any] | None = None
         self.stages: list[Stage] = []
         self._metrics = PipelineMetrics()
-        self.result: Result = self._metrics
+        self._error: Err | None = None
         self.cancel_event = asyncio.Event()
         self.tasks: set[Task[Any]] = set()
         self._gen_stream: Queue | None = None
@@ -57,7 +57,7 @@ class Pipeline:
     def gen(self, gen: Iterator[Any] | AsyncIterator[Any]) -> Pipeline:
         self.generator = gen
         self.cancel_event.clear()
-        self.result = self._metrics
+        self._error = None
         return self
     
     def stage(self, st: Stage | Pipeline) -> Pipeline:
@@ -75,7 +75,15 @@ class Pipeline:
 
     def _reset_metrics(self) -> None:
         self._metrics = PipelineMetrics()
-        self.result = self._metrics
+        self._error = None
+
+    @contextlib.asynccontextmanager
+    async def _metrics_scope(self) -> AsyncIterator[None]:
+        self._reset_metrics()
+        try:
+            yield
+        finally:
+            self._calculate_metrics()
 
     def __generate(self, gen: Iterator[Any] | AsyncIterator[Any]) -> asyncio.Queue[Any]:
         outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
@@ -84,19 +92,11 @@ class Pipeline:
         async def run() -> None:
             try:
                 if isinstance(gen, AsyncIteratorABC):
-                    async for result in gen:
-                        if is_err(result):
-                            self.__handle_err(str(result))
-                            self.__handle_log(result)
-                            return                        # sentinel sent in finally
-                        await outbound.put(unwrap(result))
+                    async for item in gen:
+                        await outbound.put(item)
                 elif isinstance(gen, IteratorABC):
-                    for result in gen:
-                        if is_err(result):
-                            self.__handle_err(str(result))
-                            self.__handle_log(result)
-                            return                        # sentinel sent in finally
-                        await outbound.put(unwrap(result))
+                    for item in gen:
+                        await outbound.put(item)
                 else:
                     raise TypeError("Pipeline source must be Iterator or AsyncIterator")
             except asyncio.CancelledError:
@@ -128,8 +128,11 @@ class Pipeline:
         if self.log:
             logger.info(val)
     
-    def __handle_err(self, err: str) -> None:
-        self.result = Err(err)
+    def __handle_err(self, err: str | Err) -> None:
+        if isinstance(err, Err):
+            self._error = err
+        else:
+            self._error = Err(err)
 
     async def __drain(self, q: Queue[Any]) -> None:
         while True:
@@ -144,39 +147,32 @@ class Pipeline:
             return self.result
         if not self.generator:
             err = Err("no generator")
-            self.__handle_err(err.message)
+            self.__handle_err(err)
             self.__handle_log(err.message)
             return err
-        
-        self._reset_metrics()
-        stream = self.__generate(self.generator)
-        for stage in self.stages:
-            stream = stage.run(stream)
-        await self.__drain(stream)
-        self._calculate_metrics()
-        if isinstance(self.result, Err):
-            return self.result
-        self.result = self._metrics
+
+        async with self._metrics_scope():
+            stream = self.__generate(self.generator)
+            for stage in self.stages:
+                stream = stage.run(stream)
+            await self.__drain(stream)
+
         return self.result
     
     async def as_async_generator(self) -> AsyncIterator:
         if not self.generator:
             raise RuntimeError("Pipeline.as_async_generator needs a self.generator")
 
-        self._reset_metrics()
-        stream = self.__generate(self.generator)
-        for stage in self.stages:
-            stream = stage.run(stream)
+        async with self._metrics_scope():
+            stream = self.__generate(self.generator)
+            for stage in self.stages:
+                stream = stage.run(stream)
 
-        while True:
-            val = await stream.get()
-            yield val
-            if val is SENTINEL:
-                break
-
-        self._calculate_metrics()
-        if not isinstance(self.result, Err):
-            self.result = self._metrics
+            while True:
+                val = await stream.get()
+                yield val
+                if val is SENTINEL:
+                    break
 
     def iter(self, max_buffer: int = 64) -> Iterator[Any]:
         q: queue.Queue = queue.Queue(maxsize=max_buffer)
@@ -236,7 +232,11 @@ class Pipeline:
             self._metrics.duration = max(0.0, stop_time - self._metrics.start)
         else:
             self._metrics.duration = 0.0
-    
+
+    @property
+    def result(self) -> Result:
+        return self._error if self._error is not None else self._metrics
+
     @property
     def metrics(self) -> PipelineMetrics:
         return self._metrics
@@ -249,7 +249,7 @@ class Pipeline:
             reason = "pipeline cancelled"
 
         self.cancel_event.set()
-        self.result = Err(reason)
+        self.__handle_err(reason)
         self.__handle_log(reason)
 
         if self._parent is not None:
@@ -295,5 +295,4 @@ class Pipeline:
                 self._gen_stream.put_nowait(SENTINEL)
             self._gen_stream = None
 
-        self._calculate_metrics()
         return self.result
