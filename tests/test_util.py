@@ -21,7 +21,7 @@ class TestErr:
     
     def test_err_creation(self) -> None:
         err = Err("test error")
-        assert err.message == "test error"
+        assert err.value == "test error"
         assert err.trace == []
     
     def test_err_repr_simple(self) -> None:
@@ -35,7 +35,7 @@ class TestErr:
         
         assert wrapped is err1  # wrap modifies and returns self
         assert len(wrapped.trace) == 1
-        assert wrapped.trace[0].message == "second error"
+        assert wrapped.trace[0].value == "second error"
     
     def test_err_wrap_with_nested_trace(self) -> None:
         err1 = Err("error1")
@@ -129,8 +129,8 @@ class TestErrAsValue:
         result = failing_function(-1)
         assert is_err(result)
         assert isinstance(result, Err)
-        assert "ValueError" in result.message
-        assert "Negative not allowed" in result.message
+        assert "ValueError" in str(result.value)
+        assert "Negative not allowed" in str(result.value)
     
     def test_preserves_function_metadata(self) -> None:
         @err_as_value
@@ -188,7 +188,7 @@ class TestWithRetry:
         assert is_err(result)
         assert isinstance(result, Err)
         assert call_count == 2
-        assert "failed with retry" in result.message
+        assert "failed with retry" in str(result.value)
         assert len(result.trace) > 0  # Should have wrapped the last error
     
     def test_zero_retries(self) -> None:

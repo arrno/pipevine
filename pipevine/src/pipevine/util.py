@@ -5,15 +5,15 @@ import asyncio
 
 @dataclass
 class Err:
-    message: str
+    value: str | Exception
     trace: list["Err"] = field(default_factory=list)
 
     def wrap(self, other: "Err") -> "Err":
-        self.trace = [Err(other.message), *other.trace, *self.trace]
+        self.trace = [Err(other.value), *other.trace, *self.trace]
         return self
     
     def __repr__(self) -> str:
-        rep = self.message
+        rep = str(self.value)
         if len(self.trace) > 0:
             rep += "\n"
             rep += "\n".join([repr(x) for x in self.trace])
@@ -28,7 +28,7 @@ def is_err(res: Result[T]) -> bool:
 
 def get_err(res: Result[T]) -> str:
     if isinstance(res, Err):
-        return res.message
+        return str(res.value)
     return ""
 
 def is_ok(res: Result[T]) -> TypeGuard[T]:
@@ -36,7 +36,7 @@ def is_ok(res: Result[T]) -> TypeGuard[T]:
 
 def unwrap(res: Result[T]) -> T:
     if isinstance(res, Err):
-        raise RuntimeError("unwrap on Err: "+res.message)
+        raise RuntimeError(f"unwrap on Err: {res.value}")
     return res
 
 def unwrap_or(res: Result[T], default: T) -> T:

@@ -13,7 +13,7 @@ from typing import Any, Iterator, AsyncIterator, Awaitable, Callable, cast
 
 from .async_util import SENTINEL
 from .stage import Stage, StageMetrics
-from .util import Err, Result, is_err, unwrap, aiter_from_iter
+from .util import Err, Result, aiter_from_iter
 
 logger = logging.getLogger(__name__)
 
@@ -142,13 +142,13 @@ class Pipeline:
             if self._log_emit:
                 logger.info(val)
             
-    async def run(self) -> Result:
+    async def run(self) -> Result[Err | PipelineMetrics]:
         if self.cancel_event.is_set():
             return self.result
         if not self.generator:
             err = Err("no generator")
             self.__handle_err(err)
-            self.__handle_log(err.message)
+            self.__handle_log(err.value)
             return err
 
         async with self._metrics_scope():
@@ -237,14 +237,14 @@ class Pipeline:
             self._metrics.duration = 0.0
 
     @property
-    def result(self) -> Result:
+    def result(self) -> Result[Err | PipelineMetrics]:
         return self._error if self._error is not None else self._metrics
 
     @property
     def metrics(self) -> PipelineMetrics:
         return self._metrics
 
-    async def cancel(self, reason: str | None = None) -> Result:
+    async def cancel(self, reason: str | None = None) -> Result[Err | PipelineMetrics]:
         if self.cancel_event.is_set():
             return self.result
 
