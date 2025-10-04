@@ -13,7 +13,7 @@ from typing import Any, Iterator, AsyncIterator, Awaitable, Callable, cast
 
 from .async_util import SENTINEL
 from .stage import Stage, StageMetrics
-from .util import Err, Result, is_err, unwrap
+from .util import Err, Result, is_err, unwrap, aiter_from_iter
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class Pipeline:
 
     def __init__(self, gen: Iterator[Any] | AsyncIterator[Any] | Pipeline, log: bool = False) -> None:
         self.log = log
-        self.generator: Iterator[Any] | AsyncIterator[Any] | None = None
+        self.generator: AsyncIterator[Any] | None = None
         self.stages: list[Stage] = []
         self._metrics = PipelineMetrics()
         self._error: Err | None = None
@@ -48,14 +48,17 @@ class Pipeline:
         
         if isinstance(gen, Pipeline):
             self._parent = gen
-            self.gen(gen.iter())
+            self.gen(gen.as_async_generator())
             return
         
         self.gen(gen)
 
 
     def gen(self, gen: Iterator[Any] | AsyncIterator[Any]) -> Pipeline:
-        self.generator = gen
+        if isinstance(gen, Iterator):
+            self.generator = aiter_from_iter(gen)
+        else:
+            self.generator = gen
         self.cancel_event.clear()
         self._error = None
         return self
@@ -63,7 +66,7 @@ class Pipeline:
     def stage(self, st: Stage | Pipeline) -> Pipeline:
         st.log = self.log
         if isinstance(st, Pipeline):
-            st.gen(self.iter())
+            st.gen(self.as_async_generator())
             return st
         st._on_kill_switch = self.cancel
         if len(st.functions) > 0:
@@ -85,7 +88,7 @@ class Pipeline:
         finally:
             self._calculate_metrics()
 
-    def __generate(self, gen: Iterator[Any] | AsyncIterator[Any]) -> asyncio.Queue[Any]:
+    def __generate(self, gen: AsyncIterator[Any]) -> asyncio.Queue[Any]:
         outbound: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
         self._gen_stream = outbound
 
@@ -93,9 +96,6 @@ class Pipeline:
             try:
                 if isinstance(gen, AsyncIteratorABC):
                     async for item in gen:
-                        await outbound.put(item)
-                elif isinstance(gen, IteratorABC):
-                    for item in gen:
                         await outbound.put(item)
                 else:
                     raise TypeError("Pipeline source must be Iterator or AsyncIterator")
@@ -173,7 +173,10 @@ class Pipeline:
                 yield val
                 if val is SENTINEL:
                     break
-
+    
+    def async_iter(self) -> AsyncIterator[Any]:
+        return self.as_async_generator()
+    
     def iter(self, max_buffer: int = 64) -> Iterator[Any]:
         q: queue.Queue = queue.Queue(maxsize=max_buffer)
         done = object()  # end-of-iteration marker distinct from SENTINEL
@@ -252,15 +255,16 @@ class Pipeline:
         self.__handle_err(reason)
         self.__handle_log(reason)
 
+        # 1) Close our own generator ASAP to stop consuming parent.
+        gen = self.generator
         if self._parent is not None:
             await self._parent.cancel(reason)
-
-        gen = self.generator
-        if gen is not None:
+        elif gen is not None:
             aclose = getattr(gen, "aclose", None)
             if callable(aclose):
                 aclose_typed = cast(Callable[[], Awaitable[None]], aclose)
                 with contextlib.suppress(Exception):
+                    # Keep this short & shielded; we just want to signal closure.
                     await asyncio.wait_for(asyncio.shield(aclose_typed()), 1.0)
             else:
                 close = getattr(gen, "close", None)
@@ -268,6 +272,22 @@ class Pipeline:
                     with contextlib.suppress(Exception):
                         close()
 
+        # 2) Unblock any producer/consumer by draining our own stream
+        if self._gen_stream is not None:
+            try:
+                while True:
+                    try:
+                        self._gen_stream.get_nowait()
+                    except QueueEmpty:
+                        break
+                    except Exception:
+                        break
+                with contextlib.suppress(QueueFull, Exception):
+                    self._gen_stream.put_nowait(SENTINEL)
+            finally:
+                self._gen_stream = None
+
+        # 3) Now cancel our tasks
         tasks = list(self.tasks)
         for task in tasks:
             if not task.done():
@@ -275,24 +295,12 @@ class Pipeline:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
+        # 4) Close stages
         if self.stages:
             await asyncio.gather(
                 *(stage.close() for stage in self.stages),
                 return_exceptions=True,
             )
 
-        # generator task canceled, drain self gen_stream until empty
-        # then send final sentinel for drain
-        if self._gen_stream is not None:
-            while True:
-                try:
-                    self._gen_stream.get_nowait()
-                except QueueEmpty:
-                    break
-                except Exception:
-                    break
-            with contextlib.suppress(QueueFull, Exception):
-                self._gen_stream.put_nowait(SENTINEL)
-            self._gen_stream = None
-
         return self.result
+

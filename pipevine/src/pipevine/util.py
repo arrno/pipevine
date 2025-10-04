@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
-from typing import TypeVar, Callable, Any, cast, TypeGuard, TypeAlias, ParamSpec
+from typing import TypeVar, Callable, Any, cast, TypeGuard, TypeAlias, ParamSpec, Iterator, AsyncIterator
 from functools import wraps
+import asyncio
 
 @dataclass
 class Err:
@@ -75,3 +76,11 @@ def with_retry(retry: int) -> Callable[[Callable[P, T]], Callable[P, Result[T]]]
             return Err("failed with retry").wrap(cast(Err, last_err))
         return wrapper
     return decorator
+
+async def aiter_from_iter(it: Iterator[Any]) -> AsyncIterator[Any]:
+    sentinel = object()
+    while True:
+        item = await asyncio.to_thread(next, it, sentinel)  # run sync next() off-loop
+        if item is sentinel:
+            break
+        yield item
