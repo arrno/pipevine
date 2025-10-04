@@ -7,7 +7,7 @@ async/await and multiprocessing execution models.
 """
 
 from .pipevine.pipeline import Pipeline
-from .pipevine.stage import Stage, work_pool, mix_pool, as_stage, PathChoice
+from .pipevine.stage import Stage, work_pool, mix_pool, as_stage, PathChoice, KillSwitch
 from .pipevine.util import Result, Err, is_err, unwrap, with_retry
 from .pipevine.worker_state import WorkerHandler, WorkerState
 from .pipevine.async_util import SENTINEL
@@ -30,5 +30,6 @@ __all__ = [
     "with_retry",
     "WorkerHandler",
     "WorkerState",
-    "SENTINEL"
+    "SENTINEL", 
+    "KillSwitch"
 ]

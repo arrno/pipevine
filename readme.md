@@ -17,6 +17,8 @@ Think of it as a lighter alternative to frameworks like Celery, giving you **bac
 -   **👥 Flexible worker patterns** via worker pools, branching, and mixed functions
 -   **🔗 Composable pipelines** using method chaining `.stage()` or operator overloading `>>`
 -   **🛡 Error-aware** results with Result types for graceful degradation
+-   **✋ Safe cancellation** with cooperative shutdown, draining in-flight work, and graceful task termination
+-   **🔎 Metrics & visibility** via counters, timers, and hooks for logging/observability systems
 
 ## Installation
 
@@ -52,7 +54,7 @@ or run pipeline as an iterator
 pipe = (
     Pipeline(range(100)) >>
     process_data >>
-    validate_date
+    validate_data
 )
 
 for item in pipe.iter():
@@ -140,6 +142,21 @@ pipe = (
 result = await pipe.run()
 ```
 
+### Cancellation
+
+Pipelines support cooperative, graceful shutdown. You can trigger cancellation in two ways:
+
+-   Call the pipeline’s `cancel` method directly.
+-   Emit a special kill signal from any stage handler:
+    ```python
+    from pipevine.stage import KillSwitch
+    return KillSwitch("oh no!")
+    ```
+
+When cancellation is triggered, Pipevine drains in-flight work and shuts down workers cleanly.
+
+⚠️ Exceptions raised by stage handlers are **counted**, safely discarded, and (optionally) logged.
+
 ## Configuration Options
 
 ### Stage Parameters
@@ -170,6 +187,36 @@ Items are broadcast to all workers, results are merged:
 @work_pool(num_workers=3, fork_merge=lambda results: sum(results))
 async def aggregate(item, state):
     return analyze_aspect(item)  # Each worker analyzes different aspect
+```
+
+## Observability
+
+### Metrics
+
+When a pipeline finishes, it returns a `Result` object. This is either:
+
+-   `Err` — if the pipeline failed, or
+-   `PipelineMetrics` — if the pipeline completed successfully.
+
+`PipelineMetrics` contains counters and timings for visibility and observability:
+
+```python
+@dataclass
+class PipelineMetrics:
+    start: float = 0       # Start timestamp
+    stop: float = 0        # Stop timestamp
+    duration: float = 0    # Total runtime (seconds)
+    processed: int = 0     # Number of successfully processed items
+    failed: int = 0        # Number of failed items
+    stages: list[StageMetrics] = field(default_factory=list)
+```
+
+### Logging
+
+For extra visibility during debugging, enable logging:
+
+```python
+pipe = Pipeline(range(100), log=True)
 ```
 
 ## Advanced Examples

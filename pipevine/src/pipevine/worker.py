@@ -4,11 +4,12 @@ import pickle
 import asyncio
 import logging
 import multiprocessing as mp
-from asyncio import Queue, shield
+from asyncio import Queue, shield, Task
 from collections import deque
 from multiprocessing import Queue as MPQueue, get_all_start_methods
 from multiprocessing.process import BaseProcess
-from typing import Any, Sequence, Tuple, TypeVar
+from multiprocessing.sharedctypes import Synchronized
+from typing import Any, Callable, Sequence, Tuple, TypeVar
 
 from .async_util import SENTINEL
 from .util import is_ok, unwrap, with_retry, get_err
@@ -23,6 +24,9 @@ def worker_no_buf(
     retries: int,
     inbound: Queue[Any],
     log: bool = False,
+    *,
+    register_task: Callable[[Task[Any]], None] | None = None,
+    on_err: Callable[[], None] | None = None,
 ) -> Queue[Any]: 
     
     outbound: Queue = Queue(1)
@@ -40,12 +44,16 @@ def worker_no_buf(
                     result = await result
                 if not is_ok(result):
                     if log: logger.warning(result)
+                    if on_err:
+                        on_err()
                     continue
                 await outbound.put(unwrap(result))
         finally:
             await shield(outbound.put(SENTINEL))
 
-    asyncio.create_task(run())
+    task = asyncio.create_task(run())
+    if register_task:
+        register_task(task)
     return outbound
 
 # async wrapper
@@ -54,11 +62,21 @@ def worker(
     buf_size: int, 
     retries: int,
     inbound: Queue[Any],
-    log: bool = False
+    log: bool = False,
+    *,
+    register_task: Callable[[Task[Any]], None] | None = None,
+    on_err: Callable[[], None] | None = None,
 ) -> Queue[Any]:
     
     if buf_size <= 0:
-        return worker_no_buf(f, retries, inbound)
+        return worker_no_buf(
+            f,
+            retries,
+            inbound,
+            log,
+            register_task=register_task,
+            on_err=on_err,
+        )
     
     outbound: Queue = Queue(1)
     handler = with_retry(retries)(f)
@@ -90,6 +108,8 @@ def worker(
                     result = await result
                 if not is_ok(result):
                     if log: logger.warning(result)
+                    if on_err:
+                        on_err()
                     continue
                 await outbound.put(unwrap(result))
 
@@ -98,8 +118,11 @@ def worker(
         finally: 
             await shield(outbound.put(SENTINEL))
 
-    asyncio.create_task(buff())
-    asyncio.create_task(run())
+    buff_task = asyncio.create_task(buff())
+    run_task = asyncio.create_task(run())
+    if register_task:
+        register_task(buff_task)
+        register_task(run_task)
     return outbound
 
 
@@ -133,6 +156,7 @@ def _mp_task(
     retries: int, 
     buf_size: int, 
     log: bool = False,
+    err_counter: Synchronized[int] | None = None,
 ) -> None:
     from queue import Empty
     handler = with_retry(retries)(f)
@@ -171,6 +195,9 @@ def _mp_task(
             # async functions should be wrapped or converted to sync before mp_worker
             if not is_ok(result):
                 if log: logger.warning(result)
+                if err_counter is not None:
+                    with err_counter.get_lock():
+                        err_counter.value += 1
                 continue
             outbound.put(unwrap(result))
 
@@ -187,6 +214,7 @@ def mp_worker(
     *,
     ctx_method: str | None = None,
     log: bool = False,
+    err_counter: Any | None = None,
 ) -> Tuple[MPQueue, BaseProcess]:
 
     method = _choose_ctx_method((f,), ctx_method)
@@ -197,7 +225,7 @@ def mp_worker(
     process_factory = getattr(ctx, "Process")
     proc = process_factory(
         target=_mp_task,
-        args=(f, inbound, outbound, retries, buf_size, log),
+        args=(f, inbound, outbound, retries, buf_size, log, err_counter),
         daemon=True,
     )
     proc.start()
