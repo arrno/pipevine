@@ -34,7 +34,7 @@ class Pipeline:
     async pipeline
     '''
 
-    def __init__(self, gen: Iterator[Any] | AsyncIterator[Any] | Pipeline, log: bool = False) -> None:
+    def __init__(self, gen: Iterator[Any] | AsyncIterator[Any] | Pipeline, log: bool = False, tally_len: bool = False) -> None:
         self.log = log
         self.generator: AsyncIterator[Any] | None = None
         self.stages: list[Stage] = []
@@ -45,6 +45,7 @@ class Pipeline:
         self._gen_stream: Queue | None = None
         self._parent: Pipeline | None = None
         self._log_emit = False
+        self._tally_len = tally_len
         
         if isinstance(gen, Pipeline):
             self._parent = gen
@@ -69,6 +70,7 @@ class Pipeline:
             st.gen(self.as_async_generator())
             return st
         st._on_kill_switch = self.cancel
+        st._tally_len = self._tally_len
         if len(st.functions) > 0:
             self.stages.append(st)
         return self

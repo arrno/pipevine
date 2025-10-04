@@ -176,6 +176,32 @@ class TestPipelineExecution:
         # But we don't capture the final output in this test
 
     @pytest.mark.asyncio
+    async def test_pipeline_metrics_tally(self) -> None:
+        @work_pool()
+        def double_set(x: list[int], state: WorkerState) -> list[int]:
+            return [i*2 for i in x]
+        
+        data = [[1, 2, 3], [1, 2, 3], [1, 2, 3]]
+        pipeline = Pipeline(iter(data)) >> double_set
+        pipeline.log = False
+
+        result = await pipeline.run()
+        assert isinstance(result, PipelineMetrics)
+        assert result is pipeline.metrics
+        assert result.processed == 3
+
+
+        data = [[1, 2, 3], [1, 2, 3], [1, 2, 3]]
+        pipeline = Pipeline(iter(data), tally_len=True) >> double_set
+        pipeline.log = False
+
+        result = await pipeline.run()
+        assert isinstance(result, PipelineMetrics)
+        assert result is pipeline.metrics
+        assert result.processed == 9
+
+
+    @pytest.mark.asyncio
     async def test_pipeline_metrics_success(self) -> None:
         @work_pool()
         def double(x: int, state: WorkerState) -> int:

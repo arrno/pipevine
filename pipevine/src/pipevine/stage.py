@@ -86,6 +86,7 @@ class Stage:
         self._inbound: Queue | None = None
         self._metrics = StageMetrics()
         self._on_kill_switch: Callable[[str | None], Awaitable[Any]] = dummy
+        self._tally_len = False
 
     def _register_task(self, task: Task[Any]) -> None:
         self._tasks.add(task)
@@ -94,7 +95,7 @@ class Stage:
         task.add_done_callback(_cleanup)
 
     def _count(self, item: Any) -> None:
-        if hasattr(item, "__len__"):
+        if self._tally_len and hasattr(item, "__len__"):
             self._metrics.processed += len(item)
         else:
             self._metrics.processed += 1

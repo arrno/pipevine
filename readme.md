@@ -211,6 +211,12 @@ class PipelineMetrics:
     stages: list[StageMetrics] = field(default_factory=list)
 ```
 
+To have processed metric also reflect length of list/dict items:
+
+```python
+pipe = Pipeline(range(100), tally_len=True)
+```
+
 ### Logging
 
 For extra visibility during debugging, enable logging:
