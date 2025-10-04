@@ -57,18 +57,19 @@ fi
 echo ">> Detected project config: $CFG"
 echo ">> Setting version to: $NEW_VERSION"
 
-# ---- Version bump ----
-PY_OUT="$(python - "$CFG" "$NEW_VERSION" <<'PY'
+# ---- Write the Python bump script to a temp file (avoids heredoc edge cases) ----
+BUMP_PY=".release_bump.py"
+cat > "$BUMP_PY" <<'PY'
 import sys, re
 
 cfg, new_version = sys.argv[1], sys.argv[2]
 
-def read(p): 
-    with open(p, 'r', encoding='utf-8') as f: 
+def read(p):
+    with open(p, 'r', encoding='utf-8') as f:
         return f.read()
 
-def write(p, s): 
-    with open(p, 'w', encoding='utf-8') as f: 
+def write(p, s):
+    with open(p, 'w', encoding='utf-8') as f:
         f.write(s)
 
 def update_pyproject_toml(path, ver):
@@ -92,25 +93,27 @@ def update_pyproject_toml(path, ver):
             return tomlkit.dumps(doc)
     except Exception:
         pass
+
     def replace_in_section(src, section_regex, assign_regex, new_line):
         m = re.search(section_regex, src, flags=re.M|re.S)
-        if not m: 
+        if not m:
             return None
         block = m.group(1)
         new_block, n = re.subn(assign_regex, new_line, block, count=1, flags=re.M)
         if n:
             return src[:m.start(1)] + new_block + src[m.end(1):]
-        if not block.endswith("\\n"):
-            block += "\\n"
-        new_block = block + new_line + "\\n"
+        if not block.endswith("\n"):
+            block += "\n"
+        new_block = block + new_line + "\n"
         return src[:m.start(1)] + new_block + src[m.end(1):]
-    res = replace_in_section(s, r'^\\[project\\]\\s*(.*?)(?=^\\[|\\Z)',
-                             r'^\\s*version\\s*=\\s*["\\']?[^"\\']+["\\']?\\s*$',
+
+    res = replace_in_section(s, r'^\[project\]\s*(.*?)(?=^\[|\Z)',
+                             r'^\s*version\s*=\s*["\']?[^"\']+["\']?\s*$',
                              f'version = "{ver}"')
     if res is not None:
         return res
-    res = replace_in_section(s, r'^\\[tool\\.poetry\\]\\s*(.*?)(?=^\\[|\\Z)',
-                             r'^\\s*version\\s*=\\s*["\\']?[^"\\']+["\\']?\\s*$',
+    res = replace_in_section(s, r'^\[tool\.poetry\]\s*(.*?)(?=^\[|\Z)',
+                             r'^\s*version\s*=\s*["\']?[^"\']+["\']?\s*$',
                              f'version = "{ver}"')
     if res is not None:
         return res
@@ -119,21 +122,21 @@ def update_pyproject_toml(path, ver):
 
 def update_setup_cfg(path, ver):
     s = read(path)
-    m = re.search(r'^\\[metadata\\]\\s*(.*?)(?=^\\[|\\Z)', s, flags=re.M|re.S)
+    m = re.search(r'^\[metadata\]\s*(.*?)(?=^\[|\Z)', s, flags=re.M|re.S)
     if not m:
         return s
     block = m.group(1)
-    new_block, n = re.subn(r'^\\s*version\\s*=\\s*.*$', f'version = {ver}', block, count=1, flags=re.M)
+    new_block, n = re.subn(r'^\s*version\s*=\s*.*$', f'version = {ver}', block, count=1, flags=re.M)
     if not n:
-        if not block.endswith("\\n"):
-            block += "\\n"
-        new_block = block + f"version = {ver}\\n"
+        if not block.endswith("\n"):
+            block += "\n"
+        new_block = block + f"version = {ver}\n"
     return s[:m.start(1)] + new_block + s[m.end(1):]
 
 def update_setup_py(path, ver):
     s = read(path)
-    new_s, _ = re.subn(r'(?s)(setup\\([^)]*?\\bversion\\s*=\\s*)(["\\'])(.+?)(\\2)',
-                       r'\\1\"' + ver + r'\"', s, count=1)
+    new_s, _ = re.subn(r'(?s)(setup\([^)]*?\bversion\s*=\s*)(["\'])(.+?)(\2)',
+                       r'\1"' + ver + r'"', s, count=1)
     return new_s
 
 if cfg.endswith("pyproject.toml"):
@@ -148,12 +151,18 @@ elif cfg.endswith("setup.py"):
 else:
     print(">> UNSUPPORTED")
 PY
-)"
 
+# Run the bump and capture stdout markers (e.g., DYNAMIC_VERSION)
+PY_OUT="$(python "$BUMP_PY" "$CFG" "$NEW_VERSION")"
+
+# Abort early if dynamic versioning detected
 if grep -q ">> DYNAMIC_VERSION" <<<"$PY_OUT"; then
-  echo ">> Dynamic version detected. Aborting release."
+  echo ">> Dynamic version detected in pyproject (version not modified). Aborting release."
+  rm -f "$BUMP_PY"
   exit 1
 fi
+
+rm -f "$BUMP_PY"
 
 # Ensure clean git state
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
