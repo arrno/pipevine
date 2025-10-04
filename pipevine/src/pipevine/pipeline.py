@@ -8,8 +8,8 @@ import contextlib
 from threading import Thread
 from dataclasses import dataclass, field, replace
 from asyncio import Queue, shield, Task, QueueEmpty, QueueFull
-from collections.abc import AsyncIterator as AsyncIteratorABC, Iterator as IteratorABC
-from typing import Any, Iterator, AsyncIterator, Awaitable, Callable, cast
+from collections.abc import AsyncIterator as AsyncIteratorABC
+from typing import Any, Iterator, AsyncIterator, Awaitable, Callable, cast, Iterable
 
 from .async_util import SENTINEL
 from .stage import Stage, StageMetrics
@@ -34,7 +34,7 @@ class Pipeline:
     async pipeline
     '''
 
-    def __init__(self, gen: Iterator[Any] | AsyncIterator[Any] | Pipeline, log: bool = False, tally_len: bool = False) -> None:
+    def __init__(self, gen: Iterator[Any] | AsyncIterator[Any] | Iterable | Pipeline, log: bool = False, tally_len: bool = False) -> None:
         self.log = log
         self.generator: AsyncIterator[Any] | None = None
         self.stages: list[Stage] = []
@@ -55,9 +55,11 @@ class Pipeline:
         self.gen(gen)
 
 
-    def gen(self, gen: Iterator[Any] | AsyncIterator[Any]) -> Pipeline:
+    def gen(self, gen: Iterator[Any] | AsyncIterator[Any] | Iterable) -> Pipeline:
         if isinstance(gen, Iterator):
             self.generator = aiter_from_iter(gen)
+        elif isinstance(gen, Iterable):
+            self.generator = aiter_from_iter(iter(gen))
         else:
             self.generator = gen
         self.cancel_event.clear()

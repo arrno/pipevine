@@ -332,8 +332,7 @@ class TestPipelineExecution:
         def multiply_two(x: int, state: WorkerState) -> int:
             return x * 2
 
-        data = range(10)
-        pipeline = Pipeline(iter(data)) >> add_one >> multiply_two
+        pipeline = Pipeline(range(10)) >> add_one >> multiply_two
         pipeline.log = False
         
         result = await pipeline.run()
@@ -360,7 +359,6 @@ class TestPipelineCancellation:
 
     @pytest.mark.asyncio
     async def test_cancel_mid_run(self) -> None:
-        data = list(range(50))
         pause_event = Event()
 
         @work_pool(buffer=2)
@@ -370,7 +368,7 @@ class TestPipelineCancellation:
                 await asyncio.sleep(3600)
             return x * 2
         
-        pipeline = Pipeline(iter(data)) >> slow_double
+        pipeline = Pipeline(range(50)) >> slow_double
         pipeline.log = False
 
         run_task = asyncio.create_task(pipeline.run())
@@ -385,7 +383,6 @@ class TestPipelineCancellation:
 
     @pytest.mark.asyncio
     async def test_cancel_iter(self) -> None:
-        data = list(range(50))
         pause_event = Event()
 
         @work_pool(buffer=2)
@@ -395,7 +392,7 @@ class TestPipelineCancellation:
                 await asyncio.sleep(3600)
             return x * 2
         
-        pipeline = Pipeline(iter(data)) >> slow_double
+        pipeline = Pipeline(range(50)) >> slow_double
         pipeline.log = False
 
         async def do() -> None:
@@ -411,7 +408,6 @@ class TestPipelineCancellation:
 
     @pytest.mark.asyncio
     async def test_cancel_nested_parent(self) -> None:
-        data = list(range(50))
         pause_event = Event()
 
         @work_pool(buffer=2)
@@ -425,7 +421,7 @@ class TestPipelineCancellation:
                 await asyncio.sleep(3600)
             return x * 2
         
-        parent = Pipeline(iter(data)) >> slow_double
+        parent = Pipeline(range(50)) >> slow_double
         parent.log = False
 
         child = Pipeline(parent) >> double
@@ -442,7 +438,6 @@ class TestPipelineCancellation:
 
     @pytest.mark.asyncio
     async def test_cancel_nested_child(self) -> None:
-        data = list(range(50))
         pause_event = Event()
 
         @work_pool(buffer=2)
@@ -456,7 +451,7 @@ class TestPipelineCancellation:
                 await asyncio.sleep(3600)
             return x * 2
         
-        parent = Pipeline(iter(data)) >> double
+        parent = Pipeline(range(50)) >> double
         parent.log = False
 
         child = Pipeline(parent) >> slow_double
@@ -474,7 +469,6 @@ class TestPipelineCancellation:
 
     @pytest.mark.asyncio
     async def test_cancel_from_stage(self) -> None:
-        data = list(range(50))
 
         @work_pool(buffer=2)
         async def double(x: int, state: WorkerState) -> int | KillSwitch:
@@ -482,7 +476,7 @@ class TestPipelineCancellation:
                 return KillSwitch("too large")
             return x * 2
         
-        pipeline = Pipeline(iter(data)) >> double
+        pipeline = Pipeline(range(50)) >> double
         pipeline.log = False
 
         run_task = asyncio.create_task(pipeline.run())
@@ -692,8 +686,7 @@ class TestPipelineIntegration:
             await asyncio.sleep(0.001)
             return x * 2
         
-        data = range(5)
-        pipeline = Pipeline(iter(data)) >> async_increment >> async_double
+        pipeline = Pipeline(range(5)) >> async_increment >> async_double
         pipeline.log = False
         
         result = await pipeline.run()
