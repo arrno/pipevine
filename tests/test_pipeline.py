@@ -358,6 +358,95 @@ class TestPipelineCancellation:
         assert get_err(run_result) == "stop"
 
     @pytest.mark.asyncio
+    async def test_cancel_iter(self) -> None:
+        data = list(range(50))
+        pause_event = Event()
+
+        @work_pool(buffer=2)
+        async def slow_double(x: int, state: WorkerState) -> int:
+            if x > 10:
+                pause_event.set()
+                await asyncio.sleep(3600)
+            return x * 2
+        
+        pipeline = Pipeline(iter(data)) >> slow_double
+        pipeline.log = False
+
+        async def do() -> None:
+            async for item in pipeline.async_iter():
+                print(item)
+        
+        run_task = asyncio.create_task(do())
+
+        cancel_result = await pipeline.cancel("stop")
+        await asyncio.wait_for(run_task, timeout=2)
+
+        assert is_ok(cancel_result)
+
+    @pytest.mark.asyncio
+    async def test_cancel_nested_parent(self) -> None:
+        data = list(range(50))
+        pause_event = Event()
+
+        @work_pool(buffer=2)
+        async def double(x: int, state: WorkerState) -> int:
+            return x * 2
+
+        @work_pool(buffer=2)
+        async def slow_double(x: int, state: WorkerState) -> int:
+            if x > 10:
+                pause_event.set()
+                await asyncio.sleep(3600)
+            return x * 2
+        
+        parent = Pipeline(iter(data)) >> slow_double
+        parent.log = False
+
+        child = Pipeline(parent) >> double
+        child.log = False
+
+        run_task = asyncio.create_task(child.run())
+        await pause_event.wait()
+
+        cancel_result = await parent.cancel("stop")
+        run_result = await asyncio.wait_for(run_task, timeout=2)
+
+        assert is_err(cancel_result)
+        assert is_ok(run_result)
+
+    @pytest.mark.asyncio
+    async def test_cancel_nested_child(self) -> None:
+        data = list(range(50))
+        pause_event = Event()
+
+        @work_pool(buffer=2)
+        async def double(x: int, state: WorkerState) -> int:
+            return x * 2
+
+        @work_pool(buffer=2)
+        async def slow_double(x: int, state: WorkerState) -> int:
+            if x > 10:
+                pause_event.set()
+                await asyncio.sleep(3600)
+            return x * 2
+        
+        parent = Pipeline(iter(data)) >> double
+        parent.log = False
+
+        child = Pipeline(parent) >> slow_double
+        child.log = False
+
+        run_task = asyncio.create_task(child.run())
+        await pause_event.wait()
+
+        cancel_result = await child.cancel("stop")
+        run_result = await asyncio.wait_for(run_task, timeout=2)
+
+        assert is_err(cancel_result)
+        assert is_err(run_result)
+        assert get_err(run_result) == "stop"
+
+    @pytest.mark.asyncio
     async def test_cancel_from_stage(self) -> None:
         data = list(range(50))
 
